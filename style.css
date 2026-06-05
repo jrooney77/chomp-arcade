@@ -69,6 +69,10 @@ body {
   border: 2px solid rgba(79, 227, 255, 0.82);
 }
 
+.hud-item.is-hidden {
+  display: none;
+}
+
 .hud-label {
   display: block;
   margin-bottom: 2px;
@@ -79,10 +83,15 @@ body {
 
 #scoreValue,
 #chumValue,
-#livesValue {
+#livesValue,
+#frenzyValue {
   display: block;
   font-size: 1.2rem;
   font-weight: 700;
+}
+
+#frenzyValue {
+  color: #ffcf5c;
 }
 
 #gameCanvas {

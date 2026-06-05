@@ -6,6 +6,8 @@ const ctx = canvas.getContext("2d");
 const scoreValueElement = document.getElementById("scoreValue");
 const chumValueElement = document.getElementById("chumValue");
 const livesValueElement = document.getElementById("livesValue");
+const frenzyHudElement = document.getElementById("frenzyHud");
+const frenzyValueElement = document.getElementById("frenzyValue");
 
 // A tile size of 32 gives us a clear retro maze grid.
 const TILE_SIZE = 32;
@@ -40,6 +42,9 @@ const SCORE_VALUES = {
 
 const STARTING_LIVES = 3;
 const PLAYER_HIT_DISTANCE = 22;
+const FRENZY_DURATION_MS = 7000;
+const FRENZY_CHOMP_SCORES = [200, 400, 800, 1600];
+const ENEMY_RETURN_MS = 1000;
 
 // Directions use both tile movement (row/col) and canvas movement (x/y).
 const DIRECTIONS = {
@@ -84,9 +89,14 @@ let maze = cloneMaze(INITIAL_MAZE);
 let score = 0;
 let lives = STARTING_LIVES;
 let remainingChum = countRemainingChum();
+let frenzyMode = {
+  active: false,
+  endTime: 0,
+  chompCount: 0,
+};
 
 const PLAYER_START = {
-  row: 1,
+  row: 13,
   col: 9,
 };
 
@@ -158,11 +168,72 @@ function updateScoreDisplay() {
   livesValueElement.textContent = lives;
 }
 
+function updateFrenzyDisplay() {
+  if (!frenzyMode.active || gameState !== GAME_STATE.PLAYING) {
+    frenzyHudElement.classList.add("is-hidden");
+    frenzyValueElement.textContent = "";
+    return;
+  }
+
+  const secondsLeft = Math.max(0, (frenzyMode.endTime - performance.now()) / 1000);
+  frenzyHudElement.classList.remove("is-hidden");
+  frenzyValueElement.textContent = `${secondsLeft.toFixed(1)}s`;
+}
+
+function startFrenzyMode() {
+  if (gameState !== GAME_STATE.PLAYING) {
+    return;
+  }
+
+  frenzyMode.active = true;
+  frenzyMode.endTime = performance.now() + FRENZY_DURATION_MS;
+  frenzyMode.chompCount = 0;
+
+  enemies.forEach((enemy) => {
+    if (enemy.state !== "returning") {
+      enemy.state = "vulnerable";
+      enemy.isVulnerable = true;
+    }
+  });
+
+  updateFrenzyDisplay();
+}
+
+function endFrenzyMode() {
+  frenzyMode.active = false;
+  frenzyMode.endTime = 0;
+  frenzyMode.chompCount = 0;
+
+  enemies.forEach((enemy) => {
+    if (enemy.state !== "returning") {
+      enemy.state = "normal";
+      enemy.isVulnerable = false;
+    }
+  });
+
+  updateFrenzyDisplay();
+}
+
+function updateFrenzyMode() {
+  if (!frenzyMode.active || gameState !== GAME_STATE.PLAYING) {
+    updateFrenzyDisplay();
+    return;
+  }
+
+  if (performance.now() >= frenzyMode.endTime) {
+    endFrenzyMode();
+    return;
+  }
+
+  updateFrenzyDisplay();
+}
+
 function restartGame() {
   maze = cloneMaze(INITIAL_MAZE);
   score = 0;
   lives = STARTING_LIVES;
   remainingChum = countRemainingChum();
+  endFrenzyMode();
   resetPlayerPosition();
   resetEnemies();
   updateScoreDisplay();
@@ -267,8 +338,7 @@ function collectTile() {
   if (tile === TILE.FRENZY_BAIT) {
     maze[player.row][player.col] = TILE.EMPTY;
     updateScore(SCORE_VALUES.FRENZY_BAIT);
-
-    // TODO: Trigger Frenzy Mode here in a future update.
+    startFrenzyMode();
   }
 }
 
@@ -317,6 +387,9 @@ function createEnemy(type, row, col, direction) {
     direction,
     speed: 1,
     type,
+    state: "normal",
+    isVulnerable: false,
+    returnUntil: 0,
     startRow: row,
     startCol: col,
     startDirection: direction,
@@ -355,6 +428,15 @@ function chooseEnemyDirection(enemy) {
 
 function updateEnemies() {
   enemies.forEach((enemy) => {
+    if (enemy.state === "returning") {
+      if (performance.now() >= enemy.returnUntil) {
+        enemy.state = frenzyMode.active ? "vulnerable" : "normal";
+        enemy.isVulnerable = frenzyMode.active;
+      }
+
+      return;
+    }
+
     updateEnemyTile(enemy);
 
     // Like the shark, enemies make turns only at tile centers. They reuse the
@@ -386,6 +468,9 @@ function resetEnemyPosition(enemy) {
   enemy.row = enemy.startRow;
   enemy.col = enemy.startCol;
   enemy.direction = enemy.startDirection;
+  enemy.state = "normal";
+  enemy.isVulnerable = false;
+  enemy.returnUntil = 0;
 }
 
 function resetEnemies() {
@@ -393,6 +478,7 @@ function resetEnemies() {
 }
 
 function loseLife() {
+  endFrenzyMode();
   lives -= 1;
   updateScoreDisplay();
 
@@ -414,10 +500,45 @@ function checkPlayerEnemyCollision() {
 
     // A simple circle-distance check is enough for these cartoon shapes.
     if (distance < PLAYER_HIT_DISTANCE) {
-      loseLife();
+      handleEnemyCollision(enemy);
       return;
     }
   }
+}
+
+function getFrenzyChompScore() {
+  const scoreIndex = Math.min(frenzyMode.chompCount, FRENZY_CHOMP_SCORES.length - 1);
+  return FRENZY_CHOMP_SCORES[scoreIndex];
+}
+
+function sendEnemyToSpawn(enemy) {
+  const center = getTileCenter(enemy.startRow, enemy.startCol);
+
+  enemy.x = center.x;
+  enemy.y = center.y;
+  enemy.row = enemy.startRow;
+  enemy.col = enemy.startCol;
+  enemy.direction = enemy.startDirection;
+  enemy.state = "returning";
+  enemy.isVulnerable = false;
+  enemy.returnUntil = performance.now() + ENEMY_RETURN_MS;
+}
+
+function handleEnemyCollision(enemy) {
+  if (enemy.state === "returning") {
+    return;
+  }
+
+  // During Frenzy Mode, vulnerable enemies are worth bonus points instead of
+  // costing a life. The score doubles with each chomp in the same Frenzy Mode.
+  if (enemy.isVulnerable) {
+    updateScore(getFrenzyChompScore());
+    frenzyMode.chompCount += 1;
+    sendEnemyToSpawn(enemy);
+    return;
+  }
+
+  loseLife();
 }
 
 function drawWaterTile(x, y) {
@@ -458,12 +579,13 @@ function drawChum(x, y) {
 function drawFrenzyBait(x, y) {
   const centerX = x + TILE_SIZE / 2;
   const centerY = y + TILE_SIZE / 2;
+  const pulse = Math.sin(performance.now() / 140) * 3;
 
   ctx.shadowColor = "#ff4a22";
-  ctx.shadowBlur = 14;
+  ctx.shadowBlur = 18 + pulse;
   ctx.fillStyle = "#ffb000";
   ctx.beginPath();
-  ctx.arc(centerX, centerY, 9, 0, Math.PI * 2);
+  ctx.arc(centerX, centerY, 9 + pulse * 0.2, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = "#ff3b30";
@@ -476,15 +598,25 @@ function drawFrenzyBait(x, y) {
 function drawPlayerShark() {
   const facing = player.direction || player.nextDirection || "right";
   const direction = DIRECTIONS[facing];
+  const isFrenzy = frenzyMode.active && gameState === GAME_STATE.PLAYING;
+  const pulse = isFrenzy ? Math.sin(performance.now() / 110) * 4 : 0;
 
   ctx.save();
   ctx.translate(player.x, player.y);
   ctx.rotate(direction.angle);
 
-  ctx.shadowColor = "rgba(217, 251, 255, 0.45)";
-  ctx.shadowBlur = 8;
+  ctx.shadowColor = isFrenzy ? "rgba(255, 111, 64, 0.9)" : "rgba(217, 251, 255, 0.45)";
+  ctx.shadowBlur = isFrenzy ? 18 + pulse : 8;
 
-  ctx.fillStyle = "#6f9fb7";
+  if (isFrenzy) {
+    ctx.strokeStyle = "rgba(255, 207, 92, 0.7)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, 20 + pulse * 0.3, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = isFrenzy ? "#ff805c" : "#6f9fb7";
   ctx.strokeStyle = "#d9fbff";
   ctx.lineWidth = 2;
 
@@ -505,7 +637,7 @@ function drawPlayerShark() {
   ctx.stroke();
 
   // Top fin.
-  ctx.fillStyle = "#8cb9c9";
+  ctx.fillStyle = isFrenzy ? "#ffb15f" : "#8cb9c9";
   ctx.beginPath();
   ctx.moveTo(-3, -8);
   ctx.lineTo(4, -18);
@@ -539,17 +671,23 @@ function drawPlayerShark() {
 
 function drawDolphinPatrol(enemy) {
   const direction = DIRECTIONS[enemy.direction || enemy.startDirection];
+  const isVulnerable = enemy.state === "vulnerable";
+  const isReturning = enemy.state === "returning";
+  const bodyColor = isVulnerable ? "#7f91a5" : "#7fd8ff";
+  const finColor = isVulnerable ? "#a8b3c0" : "#b7ecff";
+  const strokeColor = isVulnerable ? "#d8e0e8" : "#d9fbff";
 
   ctx.save();
   ctx.translate(enemy.x, enemy.y);
   ctx.rotate(direction.angle);
+  ctx.globalAlpha = isReturning ? 0.55 : 1;
 
-  ctx.shadowColor = "rgba(79, 227, 255, 0.45)";
-  ctx.shadowBlur = 7;
+  ctx.shadowColor = isVulnerable ? "rgba(180, 190, 205, 0.55)" : "rgba(79, 227, 255, 0.45)";
+  ctx.shadowBlur = isVulnerable ? 12 : 7;
 
   // Tail.
-  ctx.fillStyle = "#7fd8ff";
-  ctx.strokeStyle = "#d9fbff";
+  ctx.fillStyle = bodyColor;
+  ctx.strokeStyle = strokeColor;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(-12, 0);
@@ -572,7 +710,7 @@ function drawDolphinPatrol(enemy) {
   ctx.stroke();
 
   // Curved dorsal fin.
-  ctx.fillStyle = "#b7ecff";
+  ctx.fillStyle = finColor;
   ctx.beginPath();
   ctx.moveTo(-4, -7);
   ctx.quadraticCurveTo(0, -17, 8, -7);
@@ -714,6 +852,7 @@ function gameLoop() {
   }
 
   if (gameState === GAME_STATE.PLAYING) {
+    updateFrenzyMode();
     movePlayer();
     updateEnemies();
     checkPlayerEnemyCollision();
@@ -795,4 +934,5 @@ canvas.addEventListener("touchcancel", () => {
 });
 
 updateScoreDisplay();
+updateFrenzyDisplay();
 gameLoop();
