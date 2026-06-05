@@ -13,12 +13,14 @@
 }
 
 body {
+  height: 100dvh;
   min-height: 100vh;
   margin: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  overflow: hidden;
+  padding: clamp(8px, 2vw, 24px);
   color: var(--foam);
   font-family: "Trebuchet MS", "Lucida Console", monospace;
   background:
@@ -28,12 +30,17 @@ body {
 }
 
 .game-shell {
-  width: min(100%, 760px);
+  width: min(100%, 1120px);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
 }
 
 .game-header {
-  margin-bottom: 16px;
+  flex: 0 0 auto;
+  margin-bottom: clamp(8px, 1.6vh, 16px);
 }
 
 .game-header h1 {
@@ -55,9 +62,12 @@ body {
 
 .game-hud {
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
   justify-content: center;
   gap: 12px;
-  margin: 0 auto 12px;
+  width: min(100%, 900px);
+  margin: 0 auto clamp(8px, 1.5vh, 12px);
 }
 
 .hud-item {
@@ -96,9 +106,12 @@ body {
 
 #gameCanvas {
   display: block;
-  width: min(100%, 608px);
+  width: min(100%, 1120px);
+  max-width: 100%;
+  max-height: calc(100dvh - 190px);
   height: auto;
   margin: 0 auto;
+  aspect-ratio: 19 / 15;
   touch-action: none;
   image-rendering: pixelated;
   background: #03111f;
@@ -111,24 +124,63 @@ body {
 
 @media (max-width: 520px) {
   body {
-    padding: 14px;
+    padding: 8px;
   }
 
   .game-header {
-    margin-bottom: 12px;
+    margin-bottom: 8px;
+  }
+
+  .game-header h1 {
+    font-size: 2.1rem;
+  }
+
+  .game-header p {
+    font-size: 0.92rem;
   }
 
   .game-hud {
     gap: 8px;
+    margin-bottom: 8px;
   }
 
   .hud-item {
     min-width: 0;
-    flex: 1;
-    padding: 7px 9px;
+    flex: 1 1 calc(50% - 8px);
+    padding: 6px 8px;
+  }
+
+  .hud-label {
+    font-size: 0.68rem;
+  }
+
+  #scoreValue,
+  #chumValue,
+  #livesValue,
+  #frenzyValue {
+    font-size: 1rem;
   }
 
   #gameCanvas {
+    max-height: calc(100dvh - 150px);
     border-width: 3px;
+  }
+}
+
+@media (max-height: 520px) {
+  .game-header p {
+    display: none;
+  }
+
+  .game-header h1 {
+    font-size: 2rem;
+  }
+
+  .hud-item {
+    padding: 5px 8px;
+  }
+
+  #gameCanvas {
+    max-height: calc(100dvh - 115px);
   }
 }

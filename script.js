@@ -8,6 +8,8 @@ const chumValueElement = document.getElementById("chumValue");
 const livesValueElement = document.getElementById("livesValue");
 const frenzyHudElement = document.getElementById("frenzyHud");
 const frenzyValueElement = document.getElementById("frenzyValue");
+const gameHeaderElement = document.querySelector(".game-header");
+const gameHudElement = document.querySelector(".game-hud");
 
 // A tile size of 32 gives us a clear retro maze grid.
 const TILE_SIZE = 32;
@@ -16,6 +18,22 @@ const COLS = 19;
 
 canvas.width = COLS * TILE_SIZE;
 canvas.height = ROWS * TILE_SIZE;
+
+function resizeCanvasDisplay() {
+  const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  const sidePadding = window.innerWidth <= 520 ? 16 : 48;
+  const verticalPadding = window.innerWidth <= 520 ? 20 : 56;
+  const headerHeight = gameHeaderElement.offsetHeight;
+  const hudHeight = gameHudElement.offsetHeight;
+  const availableWidth = Math.max(280, Math.min(1120, window.innerWidth - sidePadding));
+  const availableHeight = Math.max(240, viewportHeight - headerHeight - hudHeight - verticalPadding);
+  const scale = Math.min(availableWidth / canvas.width, availableHeight / canvas.height);
+
+  // The canvas drawing and collision logic stay in internal canvas coordinates.
+  // Only the displayed CSS size changes here, preserving the maze aspect ratio.
+  canvas.style.width = `${Math.floor(canvas.width * scale)}px`;
+  canvas.style.height = `${Math.floor(canvas.height * scale)}px`;
+}
 
 // Game states keep the start screen separate from the playable maze screen.
 const GAME_STATE = {
@@ -45,6 +63,12 @@ const PLAYER_HIT_DISTANCE = 22;
 const FRENZY_DURATION_MS = 7000;
 const FRENZY_CHOMP_SCORES = [200, 400, 800, 1600];
 const ENEMY_RETURN_MS = 1000;
+
+const ENEMY_SPEEDS = {
+  dolphinPatrol: 1,
+  electricEel: 1,
+  diverDrone: 1,
+};
 
 // Directions use both tile movement (row/col) and canvas movement (x/y).
 const DIRECTIONS = {
@@ -100,11 +124,11 @@ const PLAYER_START = {
   col: 9,
 };
 
-const ENEMY_START = {
-  row: 7,
-  col: 10,
-  direction: "right",
-};
+const ENEMY_STARTS = [
+  { type: "dolphinPatrol", row: 7, col: 10, direction: "right" },
+  { type: "electricEel", row: 7, col: 17, direction: "left" },
+  { type: "diverDrone", row: 5, col: 9, direction: "left" },
+];
 
 function getTileCenter(row, col) {
   return {
@@ -125,9 +149,9 @@ const player = {
   speed: 2,
 };
 
-const enemies = [
-  createEnemy("dolphinPatrol", ENEMY_START.row, ENEMY_START.col, ENEMY_START.direction),
-];
+const enemies = ENEMY_STARTS.map((enemyStart) => (
+  createEnemy(enemyStart.type, enemyStart.row, enemyStart.col, enemyStart.direction)
+));
 
 function startGame() {
   if (gameState === GAME_STATE.START) {
@@ -197,6 +221,7 @@ function startFrenzyMode() {
   });
 
   updateFrenzyDisplay();
+  resizeCanvasDisplay();
 }
 
 function endFrenzyMode() {
@@ -212,6 +237,7 @@ function endFrenzyMode() {
   });
 
   updateFrenzyDisplay();
+  resizeCanvasDisplay();
 }
 
 function updateFrenzyMode() {
@@ -385,7 +411,7 @@ function createEnemy(type, row, col, direction) {
     row,
     col,
     direction,
-    speed: 1,
+    speed: ENEMY_SPEEDS[type] || 1,
     type,
     state: "normal",
     isVulnerable: false,
@@ -403,6 +429,87 @@ function getValidDirections(row, col) {
   });
 }
 
+function chooseRandomDirection(validDirections) {
+  return validDirections[Math.floor(Math.random() * validDirections.length)];
+}
+
+function chooseDolphinDirection(enemy, validDirections) {
+  const canContinue = validDirections.includes(enemy.direction);
+  const isIntersection = validDirections.length > 2;
+
+  if (!canContinue) {
+    return chooseRandomDirection(validDirections);
+  }
+
+  // Dolphin Patrol usually keeps going, but sometimes turns at intersections.
+  if (isIntersection && Math.random() < 0.25) {
+    return chooseRandomDirection(validDirections);
+  }
+
+  return enemy.direction;
+}
+
+function chooseElectricEelDirection(enemy, validDirections) {
+  const canContinue = validDirections.includes(enemy.direction);
+  const isIntersection = validDirections.length > 2;
+
+  if (!canContinue) {
+    return chooseRandomDirection(validDirections);
+  }
+
+  // Electric Eel is erratic: it changes course much more often than Dolphin
+  // Patrol, especially at intersections, but still only chooses open tiles.
+  if (isIntersection && Math.random() < 0.7) {
+    return chooseRandomDirection(validDirections);
+  }
+
+  if (Math.random() < 0.35) {
+    return chooseRandomDirection(validDirections);
+  }
+
+  return enemy.direction;
+}
+
+function getTileDistanceToPlayer(row, col) {
+  return Math.abs(player.row - row) + Math.abs(player.col - col);
+}
+
+function chooseDiverDroneDirection(enemy, validDirections) {
+  const canContinue = validDirections.includes(enemy.direction);
+
+  // Diver Drone has simple chase behavior. It looks one tile ahead in each
+  // valid direction and prefers the move that gets closest to the shark.
+  if (Math.random() < 0.18 && canContinue) {
+    return enemy.direction;
+  }
+
+  if (Math.random() < 0.12) {
+    return chooseRandomDirection(validDirections);
+  }
+
+  let bestDistance = Infinity;
+  let bestDirections = [];
+
+  validDirections.forEach((directionName) => {
+    const direction = DIRECTIONS[directionName];
+    const nextRow = enemy.row + direction.row;
+    const nextCol = enemy.col + direction.col;
+    const distance = getTileDistanceToPlayer(nextRow, nextCol);
+
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestDirections = [directionName];
+      return;
+    }
+
+    if (distance === bestDistance) {
+      bestDirections.push(directionName);
+    }
+  });
+
+  return chooseRandomDirection(bestDirections);
+}
+
 function chooseEnemyDirection(enemy) {
   const validDirections = getValidDirections(enemy.row, enemy.col);
 
@@ -410,20 +517,15 @@ function chooseEnemyDirection(enemy) {
     return null;
   }
 
-  const canContinue = validDirections.includes(enemy.direction);
-  const isIntersection = validDirections.length > 2;
-
-  if (!canContinue) {
-    return validDirections[Math.floor(Math.random() * validDirections.length)];
+  if (enemy.type === "electricEel") {
+    return chooseElectricEelDirection(enemy, validDirections);
   }
 
-  // At intersections, the Dolphin Patrol usually keeps going but sometimes
-  // picks another open corridor so its patrol path is not fully predictable.
-  if (isIntersection && Math.random() < 0.25) {
-    return validDirections[Math.floor(Math.random() * validDirections.length)];
+  if (enemy.type === "diverDrone") {
+    return chooseDiverDroneDirection(enemy, validDirections);
   }
 
-  return enemy.direction;
+  return chooseDolphinDirection(enemy, validDirections);
 }
 
 function updateEnemies() {
@@ -740,10 +842,145 @@ function drawDolphinPatrol(enemy) {
   ctx.restore();
 }
 
+function drawElectricEel(enemy) {
+  const direction = DIRECTIONS[enemy.direction || enemy.startDirection];
+  const isVulnerable = enemy.state === "vulnerable";
+  const isReturning = enemy.state === "returning";
+  const pulse = Math.sin(performance.now() / 90);
+  const bodyColor = isVulnerable ? "#8fa09b" : "#b9f15a";
+  const stripeColor = isVulnerable ? "#d7dfd5" : "#f7ff6a";
+
+  ctx.save();
+  ctx.translate(enemy.x, enemy.y);
+  ctx.rotate(direction.angle);
+  ctx.globalAlpha = isReturning ? 0.55 : 1;
+  ctx.shadowColor = isVulnerable ? "rgba(205, 215, 205, 0.55)" : "rgba(247, 255, 106, 0.8)";
+  ctx.shadowBlur = isVulnerable ? 10 : 12 + pulse * 3;
+
+  // Curvy eel body.
+  ctx.strokeStyle = bodyColor;
+  ctx.lineWidth = 9;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-18, 4);
+  ctx.quadraticCurveTo(-9, -8, 0, 1);
+  ctx.quadraticCurveTo(9, 10, 18, -2);
+  ctx.stroke();
+
+  ctx.strokeStyle = stripeColor;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-13, 2);
+  ctx.lineTo(-8, -5);
+  ctx.moveTo(-2, 1);
+  ctx.lineTo(3, 7);
+  ctx.moveTo(9, 2);
+  ctx.lineTo(14, -5);
+  ctx.stroke();
+
+  // Small electric sparks when dangerous.
+  if (!isVulnerable && !isReturning) {
+    ctx.strokeStyle = "#fff3a1";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-4, -13);
+    ctx.lineTo(0, -8);
+    ctx.lineTo(-3, -5);
+    ctx.moveTo(10, 10);
+    ctx.lineTo(15, 6);
+    ctx.lineTo(12, 3);
+    ctx.stroke();
+  }
+
+  // Eye.
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#08283d";
+  ctx.beginPath();
+  ctx.arc(15, -5, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawDiverDrone(enemy) {
+  const direction = DIRECTIONS[enemy.direction || enemy.startDirection];
+  const isVulnerable = enemy.state === "vulnerable";
+  const isReturning = enemy.state === "returning";
+  const bodyColor = isVulnerable ? "#9a978e" : "#ffb13b";
+  const trimColor = isVulnerable ? "#d5d0c6" : "#ffdf75";
+  const spin = performance.now() / 90;
+
+  ctx.save();
+  ctx.translate(enemy.x, enemy.y);
+  ctx.rotate(direction.angle);
+  ctx.globalAlpha = isReturning ? 0.55 : 1;
+  ctx.shadowColor = isVulnerable ? "rgba(210, 205, 195, 0.55)" : "rgba(255, 177, 59, 0.7)";
+  ctx.shadowBlur = isVulnerable ? 10 : 12;
+
+  // Drone body.
+  ctx.fillStyle = bodyColor;
+  ctx.strokeStyle = "#fff0bd";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.rect(-11, -8, 22, 16);
+  ctx.fill();
+  ctx.stroke();
+
+  // Front sensor.
+  ctx.fillStyle = "#06243a";
+  ctx.beginPath();
+  ctx.arc(8, 0, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = trimColor;
+  ctx.beginPath();
+  ctx.arc(9, -1, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Propellers.
+  ctx.strokeStyle = trimColor;
+  ctx.lineWidth = 2;
+  [-12, 12].forEach((offsetX) => {
+    ctx.save();
+    ctx.translate(offsetX, -10);
+    ctx.rotate(spin);
+    ctx.beginPath();
+    ctx.moveTo(-5, 0);
+    ctx.lineTo(5, 0);
+    ctx.moveTo(0, -5);
+    ctx.lineTo(0, 5);
+    ctx.stroke();
+    ctx.restore();
+  });
+
+  // Side fins.
+  ctx.fillStyle = trimColor;
+  ctx.beginPath();
+  ctx.moveTo(-8, 7);
+  ctx.lineTo(-15, 12);
+  ctx.lineTo(-5, 10);
+  ctx.closePath();
+  ctx.moveTo(4, 7);
+  ctx.lineTo(14, 11);
+  ctx.lineTo(9, 6);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.restore();
+}
+
 function drawEnemies() {
   enemies.forEach((enemy) => {
     if (enemy.type === "dolphinPatrol") {
       drawDolphinPatrol(enemy);
+    }
+
+    if (enemy.type === "electricEel") {
+      drawElectricEel(enemy);
+    }
+
+    if (enemy.type === "diverDrone") {
+      drawDiverDrone(enemy);
     }
   });
 }
@@ -933,6 +1170,10 @@ canvas.addEventListener("touchcancel", () => {
   touchStarted = false;
 });
 
+window.addEventListener("resize", resizeCanvasDisplay);
+window.addEventListener("orientationchange", resizeCanvasDisplay);
+
 updateScoreDisplay();
 updateFrenzyDisplay();
+resizeCanvasDisplay();
 gameLoop();
