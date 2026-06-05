@@ -76,8 +76,44 @@ const FRENZY_CHOMP_SCORES = [200, 400, 800, 1600];
 const ENEMY_RETURN_MS = 1000;
 const TOTAL_LEVELS = 3;
 const LEVEL_CLEAR_BONUS = 500;
-const LEVEL_CLEAR_DELAY_MS = 1200;
 const HIGH_SCORE_STORAGE_KEY = "chompHighScore";
+const MAX_PARTICLES = 120;
+const SHARK_BUBBLE_INTERVAL_MS = 95;
+
+const LEVEL_CLEAR_MESSAGES = [
+  "Jaw-some job!",
+  "That was fintastic!",
+  "You're on a roll, reef ranger!",
+  "Another bite-sized victory!",
+  "You totally crushed that current!",
+  "Shark-tacular!",
+  "No one can out-swim you!",
+  "You're making waves!",
+  "Fin-ished in style!",
+  "That level didn't stand a chance!",
+  "You've got serious bite!",
+  "That was o-fish-ally awesome!",
+  "Reef well done!",
+  "Keep chomping!",
+  "Sea-riously impressive!",
+  "You're the apex player!",
+  "That was jaws-dropping!",
+  "You're swimming circles around them!",
+  "Another deep-sea dub!",
+  "The reef never knew what bit it!",
+  "That was fintastically fierce!",
+  "Chomp champ!",
+  "The ocean approves!",
+  "You're on a tidal tear!",
+  "You've got bite and bragging rights!",
+  "This reef is your playground!",
+  "Way to sink your teeth into it!",
+  "Totally gnarly, shark star!",
+  "That was a splash hit!",
+  "You're cruising the food chain!",
+  "Fins up for that finish!",
+  "You made that maze look bite-sized!",
+];
 
 const ENEMY_SPEEDS = {
   dolphinPatrol: 1,
@@ -194,11 +230,14 @@ let lives = STARTING_LIVES;
 let remainingChum = countRemainingChum();
 let debugMode = false;
 let levelClearReady = false;
-let levelClearTimeoutId = null;
 let isPaused = false;
 let totalPausedTime = 0;
 let pauseStartedRealTime = 0;
 let pauseStartedGameTime = 0;
+let particles = [];
+let levelClearMessage = "";
+let lastLevelClearMessage = "";
+let lastSharkBubbleTime = 0;
 let frenzyMode = {
   active: false,
   endTime: 0,
@@ -474,6 +513,8 @@ function loadLevel(levelNumber) {
   enemyStarts = currentLayout.enemyStarts.map((enemyStart) => ({ ...enemyStart }));
   remainingChum = countRemainingChum();
   levelClearReady = false;
+  particles = [];
+  lastSharkBubbleTime = 0;
   endFrenzyMode();
   resetPlayerPosition();
   rebuildEnemies();
@@ -481,11 +522,6 @@ function loadLevel(levelNumber) {
 }
 
 function resetGame() {
-  if (levelClearTimeoutId) {
-    clearTimeout(levelClearTimeoutId);
-    levelClearTimeoutId = null;
-  }
-
   currentLevel = 1;
   score = 0;
   lives = STARTING_LIVES;
@@ -495,6 +531,9 @@ function resetGame() {
   pauseStartedRealTime = 0;
   pauseStartedGameTime = 0;
   levelClearReady = false;
+  particles = [];
+  levelClearMessage = "";
+  lastSharkBubbleTime = 0;
   loadLevel(currentLevel);
   gameState = GAME_STATE.PLAYING;
   updateStatusDisplay();
@@ -589,6 +628,7 @@ function collectTile() {
   if (tile === TILE.CHUM) {
     maze[player.row][player.col] = TILE.EMPTY;
     remainingChum -= 1;
+    spawnChumParticles(player.x, player.y);
     updateScore(SCORE_VALUES.CHUM);
     checkLevelClear();
     return;
@@ -596,6 +636,7 @@ function collectTile() {
 
   if (tile === TILE.FRENZY_BAIT) {
     maze[player.row][player.col] = TILE.EMPTY;
+    spawnFrenzyParticles(player.x, player.y);
     updateScore(SCORE_VALUES.FRENZY_BAIT);
     startFrenzyMode();
   }
@@ -609,31 +650,19 @@ function checkLevelClear() {
 
 function startLevelClear() {
   gameState = GAME_STATE.LEVEL_CLEAR;
-  levelClearReady = false;
+  levelClearReady = true;
+  levelClearMessage = getRandomLevelClearMessage();
   player.direction = null;
   player.nextDirection = null;
   updateScore(LEVEL_CLEAR_BONUS * currentLevel);
+  spawnLevelClearParticles();
   endFrenzyMode();
   updateStatusDisplay();
-
-  if (levelClearTimeoutId) {
-    clearTimeout(levelClearTimeoutId);
-  }
-
-  levelClearTimeoutId = setTimeout(() => {
-    levelClearReady = true;
-    advanceToNextLevel();
-  }, LEVEL_CLEAR_DELAY_MS);
 }
 
 function advanceToNextLevel() {
   if (gameState !== GAME_STATE.LEVEL_CLEAR) {
     return;
-  }
-
-  if (levelClearTimeoutId) {
-    clearTimeout(levelClearTimeoutId);
-    levelClearTimeoutId = null;
   }
 
   if (currentLevel >= TOTAL_LEVELS) {
@@ -685,6 +714,7 @@ function movePlayer() {
   const direction = DIRECTIONS[player.direction];
   player.x += direction.x * player.speed;
   player.y += direction.y * player.speed;
+  spawnSharkBubbleTrail(player.direction);
   updatePlayerTile();
 }
 
@@ -940,13 +970,213 @@ function handleEnemyCollision(enemy) {
   // During Frenzy Mode, vulnerable enemies are worth bonus points instead of
   // costing a life. The score doubles with each chomp in the same Frenzy Mode.
   if (enemy.isVulnerable) {
-    updateScore(getFrenzyChompScore());
+    const chompScore = getFrenzyChompScore();
+
+    spawnEnemyChompEffect(enemy.x, enemy.y, chompScore);
+    updateScore(chompScore);
     frenzyMode.chompCount += 1;
     sendEnemyToSpawn(enemy);
     return;
   }
 
   loseLife();
+}
+
+// Level-clear messages and effects are visual only; gameplay progression stays unchanged.
+function getRandomLevelClearMessage() {
+  let message = LEVEL_CLEAR_MESSAGES[Math.floor(Math.random() * LEVEL_CLEAR_MESSAGES.length)];
+
+  // Avoid showing the same punchline twice in a row when there are alternatives.
+  if (LEVEL_CLEAR_MESSAGES.length > 1) {
+    while (message === lastLevelClearMessage) {
+      message = LEVEL_CLEAR_MESSAGES[Math.floor(Math.random() * LEVEL_CLEAR_MESSAGES.length)];
+    }
+  }
+
+  lastLevelClearMessage = message;
+  return message;
+}
+
+function addParticle(particle) {
+  particles.push({
+    createdAt: getGameTime(),
+    duration: 420,
+    type: "dot",
+    color: "#d9fbff",
+    size: 3,
+    vx: 0,
+    vy: -20,
+    ...particle,
+  });
+
+  if (particles.length > MAX_PARTICLES) {
+    particles.splice(0, particles.length - MAX_PARTICLES);
+  }
+}
+
+function spawnBurst(x, y, count, colors, options = {}) {
+  for (let i = 0; i < count; i += 1) {
+    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.45;
+    const speed = (options.minSpeed || 18) + Math.random() * (options.speedRange || 34);
+
+    addParticle({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      size: (options.minSize || 2) + Math.random() * (options.sizeRange || 3),
+      duration: options.duration || 430,
+      color: colors[i % colors.length],
+    });
+  }
+}
+
+// spawnChumParticles() creates a tiny pink pop when a chum bit is collected.
+function spawnChumParticles(x, y) {
+  spawnBurst(x, y, 8, ["#ff6f91", "#ff3f67", "#ffdce2"], {
+    minSpeed: 14,
+    speedRange: 28,
+    minSize: 1.8,
+    sizeRange: 2.2,
+    duration: 360,
+  });
+}
+
+// spawnFrenzyParticles() makes Frenzy Bait feel stronger than regular chum.
+function spawnFrenzyParticles(x, y) {
+  spawnBurst(x, y, 16, ["#ffcf5c", "#ff7a3d", "#ff3b30", "#fff4a8"], {
+    minSpeed: 26,
+    speedRange: 42,
+    minSize: 2.4,
+    sizeRange: 3.4,
+    duration: 620,
+  });
+
+  addParticle({
+    type: "ring",
+    x,
+    y,
+    size: 9,
+    duration: 520,
+    color: "rgba(255, 207, 92, 0.9)",
+  });
+}
+
+function spawnLevelClearParticles() {
+  for (let i = 0; i < 34; i += 1) {
+    addParticle({
+      x: 64 + Math.random() * (canvas.width - 128),
+      y: canvas.height + 12 + Math.random() * 38,
+      vx: -12 + Math.random() * 24,
+      vy: -70 - Math.random() * 80,
+      size: 2 + Math.random() * 4,
+      duration: 1100 + Math.random() * 550,
+      color: i % 3 === 0 ? "#4fe3ff" : i % 3 === 1 ? "#ffcf5c" : "#ff9b87",
+    });
+  }
+}
+
+// spawnEnemyChompEffect() adds bubbles, a flash ring, and floating score text.
+function spawnEnemyChompEffect(x, y, chompScore) {
+  spawnBurst(x, y, 18, ["#d9fbff", "#4fe3ff", "#ffcf5c"], {
+    minSpeed: 22,
+    speedRange: 46,
+    minSize: 2,
+    sizeRange: 4,
+    duration: 560,
+  });
+
+  addParticle({
+    type: "ring",
+    x,
+    y,
+    size: 12,
+    duration: 430,
+    color: "rgba(217, 251, 255, 0.92)",
+  });
+
+  addParticle({
+    type: "text",
+    x,
+    y: y - 12,
+    vx: 0,
+    vy: -34,
+    duration: 760,
+    color: "#ffcf5c",
+    text: `+${chompScore}`,
+  });
+}
+
+function spawnSharkBubbleTrail(directionName) {
+  const now = getGameTime();
+
+  if (!directionName || now - lastSharkBubbleTime < SHARK_BUBBLE_INTERVAL_MS) {
+    return;
+  }
+
+  lastSharkBubbleTime = now;
+
+  const direction = DIRECTIONS[directionName];
+  const bubbleX = player.x - direction.x * 18 + (Math.random() * 6 - 3);
+  const bubbleY = player.y - direction.y * 12 + (Math.random() * 6 - 3);
+
+  addParticle({
+    x: bubbleX,
+    y: bubbleY,
+    vx: -direction.x * 8 + (Math.random() * 10 - 5),
+    vy: -22 - Math.random() * 16,
+    size: 1.7 + Math.random() * 2.4,
+    duration: 520,
+    color: "rgba(217, 251, 255, 0.72)",
+  });
+}
+
+function updateParticles() {
+  const now = getGameTime();
+
+  particles = particles.filter((particle) => now - particle.createdAt < particle.duration);
+}
+
+// drawParticles() handles chum pops, Frenzy bursts, chomp bubbles, and score text.
+function drawParticles() {
+  const now = getGameTime();
+
+  ctx.save();
+  particles.forEach((particle) => {
+    const progress = Math.min(1, (now - particle.createdAt) / particle.duration);
+    const alpha = Math.max(0, 1 - progress);
+    const x = particle.x + particle.vx * progress;
+    const y = particle.y + particle.vy * progress;
+
+    ctx.globalAlpha = alpha;
+
+    if (particle.type === "ring") {
+      ctx.strokeStyle = particle.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, particle.size + progress * 18, 0, Math.PI * 2);
+      ctx.stroke();
+      return;
+    }
+
+    if (particle.type === "text") {
+      ctx.fillStyle = particle.color;
+      ctx.font = "bold 18px Trebuchet MS, Lucida Console, monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = "rgba(255, 207, 92, 0.8)";
+      ctx.shadowBlur = 8;
+      ctx.fillText(particle.text, x, y);
+      ctx.shadowBlur = 0;
+      return;
+    }
+
+    ctx.fillStyle = particle.color;
+    ctx.beginPath();
+    ctx.arc(x, y, particle.size * (1 - progress * 0.3), 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
 }
 
 const REEF_BUBBLES = [
@@ -956,6 +1186,16 @@ const REEF_BUBBLES = [
   { x: 354, y: 354, size: 3 },
   { x: 472, y: 84, size: 5 },
   { x: 554, y: 292, size: 4 },
+];
+
+const BOARD_BUBBLES = [
+  { x: 58, y: 430, size: 2, speed: 18 },
+  { x: 92, y: 238, size: 1.5, speed: 14 },
+  { x: 176, y: 378, size: 2.5, speed: 16 },
+  { x: 286, y: 186, size: 1.7, speed: 13 },
+  { x: 410, y: 444, size: 2.2, speed: 20 },
+  { x: 520, y: 276, size: 1.8, speed: 15 },
+  { x: 572, y: 390, size: 2.6, speed: 17 },
 ];
 
 function drawRoundedRect(x, y, width, height, radius) {
@@ -1003,6 +1243,24 @@ function drawFloorTiles() {
       drawWaterTile(col * TILE_SIZE, row * TILE_SIZE);
     }
   }
+}
+
+function drawAmbientBubbles() {
+  const time = getGameTime() / 1000;
+
+  ctx.save();
+  BOARD_BUBBLES.forEach((bubble, index) => {
+    const y = (bubble.y - time * bubble.speed + canvas.height) % canvas.height;
+    const sway = Math.sin(time * 1.2 + index) * 5;
+
+    ctx.globalAlpha = 0.22;
+    ctx.strokeStyle = "rgba(217, 251, 255, 0.58)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(bubble.x + sway, y, bubble.size, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.restore();
 }
 
 // drawMazeWalls() keeps the walls readable while giving them reef-stone texture.
@@ -1149,71 +1407,109 @@ function drawPlayerShark() {
   const facing = player.direction || player.nextDirection || "right";
   const direction = DIRECTIONS[facing];
   const isFrenzy = frenzyMode.active && gameState === GAME_STATE.PLAYING;
-  const pulse = isFrenzy ? Math.sin(getGameTime() / 110) * 4 : 0;
+  const pulse = isFrenzy ? Math.sin(getGameTime() / 100) : 0;
 
   ctx.save();
   ctx.translate(player.x, player.y);
   ctx.rotate(direction.angle);
 
-  ctx.shadowColor = isFrenzy ? "rgba(255, 111, 64, 0.9)" : "rgba(217, 251, 255, 0.45)";
-  ctx.shadowBlur = isFrenzy ? 18 + pulse : 8;
+  const bodyGradient = ctx.createLinearGradient(-18, -12, 18, 12);
+  bodyGradient.addColorStop(0, isFrenzy ? "#ffb15f" : "#9ac4d4");
+  bodyGradient.addColorStop(0.42, isFrenzy ? "#ff7a3d" : "#6f9fb7");
+  bodyGradient.addColorStop(1, isFrenzy ? "#c93c34" : "#375f75");
+
+  ctx.shadowColor = isFrenzy ? "rgba(255, 111, 64, 0.95)" : "rgba(217, 251, 255, 0.45)";
+  ctx.shadowBlur = isFrenzy ? 18 + pulse * 5 : 8;
 
   if (isFrenzy) {
-    ctx.strokeStyle = "rgba(255, 207, 92, 0.7)";
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(255, 207, 92, 0.68)";
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(0, 0, 20 + pulse * 0.3, 0, Math.PI * 2);
+    ctx.arc(0, 0, 21 + pulse * 2, 0, Math.PI * 2);
     ctx.stroke();
   }
 
-  ctx.fillStyle = isFrenzy ? "#ff805c" : "#6f9fb7";
+  ctx.fillStyle = bodyGradient;
   ctx.strokeStyle = "#d9fbff";
   ctx.lineWidth = 2;
 
-  // Tail.
+  // Clear forked tail for a stronger arcade-shark silhouette.
   ctx.beginPath();
-  ctx.moveTo(-12, 0);
-  ctx.lineTo(-24, -10);
-  ctx.lineTo(-22, 0);
-  ctx.lineTo(-24, 10);
+  ctx.moveTo(-14, 0);
+  ctx.lineTo(-27, -13);
+  ctx.lineTo(-22, -3);
+  ctx.lineTo(-30, 0);
+  ctx.lineTo(-22, 3);
+  ctx.lineTo(-27, 13);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // Body.
+  // Clean body and pointed nose. The sharper top edge keeps the shark readable.
   ctx.beginPath();
-  ctx.ellipse(0, 0, 15, 10, 0, 0, Math.PI * 2);
+  ctx.moveTo(-15, -8);
+  ctx.quadraticCurveTo(1, -15, 18, -5);
+  ctx.lineTo(23, 0);
+  ctx.quadraticCurveTo(17, 6, 5, 12);
+  ctx.quadraticCurveTo(-9, 13, -18, 5);
+  ctx.quadraticCurveTo(-22, 0, -15, -8);
+  ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // Top fin.
-  ctx.fillStyle = isFrenzy ? "#ffb15f" : "#8cb9c9";
+  // Sharp triangular dorsal fin. This intentionally avoids rounded curves.
+  ctx.fillStyle = isFrenzy ? "#ffcf5c" : "#b7d9e6";
   ctx.beginPath();
-  ctx.moveTo(-3, -8);
-  ctx.lineTo(4, -18);
+  ctx.moveTo(-5, -8);
+  ctx.lineTo(1, -22);
   ctx.lineTo(9, -7);
+  ctx.lineTo(0, -5);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // White belly.
+  // Defined white belly patch.
   ctx.shadowBlur = 0;
   ctx.fillStyle = "#f3fbff";
   ctx.beginPath();
-  ctx.ellipse(4, 4, 9, 4, 0, 0, Math.PI * 2);
+  ctx.moveTo(-2, 5);
+  ctx.quadraticCurveTo(8, 2, 18, 1);
+  ctx.quadraticCurveTo(11, 9, -1, 10);
+  ctx.quadraticCurveTo(-8, 9, -2, 5);
+  ctx.closePath();
   ctx.fill();
 
-  // Eye and small mouth line.
+  // Larger eye with a tiny highlight for cartoon expression.
+  ctx.fillStyle = "#f8fdff";
+  ctx.beginPath();
+  ctx.arc(11, -5, 3, 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.fillStyle = "#07131f";
   ctx.beginPath();
-  ctx.arc(9, -4, 2, 0, Math.PI * 2);
+  ctx.arc(12, -5, 1.5, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.strokeStyle = "#1d3d4f";
+  ctx.fillStyle = "#d9fbff";
+  ctx.beginPath();
+  ctx.arc(10.6, -6.1, 0.7, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Expressive chomp mouth with tiny tooth marks.
+  ctx.strokeStyle = isFrenzy ? "#7f1f1b" : "#1d3d4f";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(8, 5);
-  ctx.quadraticCurveTo(12, 7, 14, 3);
+  ctx.moveTo(12, 3);
+  ctx.quadraticCurveTo(17, 7, 22, 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = "#f3fbff";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(16, 4);
+  ctx.lineTo(17, 6);
+  ctx.moveTo(19, 4);
+  ctx.lineTo(20, 5.5);
   ctx.stroke();
 
   ctx.restore();
@@ -1223,47 +1519,72 @@ function drawDolphinPatrol(enemy) {
   const direction = DIRECTIONS[enemy.direction || enemy.startDirection];
   const isVulnerable = enemy.state === "vulnerable";
   const isReturning = enemy.state === "returning";
-  const bodyColor = isVulnerable ? "#7f91a5" : "#7fd8ff";
-  const finColor = isVulnerable ? "#a8b3c0" : "#b7ecff";
-  const strokeColor = isVulnerable ? "#d8e0e8" : "#d9fbff";
+  const bob = Math.sin(getGameTime() / 260 + enemy.startRow) * 1.3;
+  const bodyColor = isVulnerable ? "#8494ac" : "#7fd8ff";
+  const finColor = isVulnerable ? "#c4cfdd" : "#b7ecff";
+  const strokeColor = isVulnerable ? "#eef4ff" : "#d9fbff";
 
   ctx.save();
-  ctx.translate(enemy.x, enemy.y);
+  ctx.translate(enemy.x, enemy.y + bob);
   ctx.rotate(direction.angle);
   ctx.globalAlpha = isReturning ? 0.55 : 1;
 
-  ctx.shadowColor = isVulnerable ? "rgba(180, 190, 205, 0.55)" : "rgba(79, 227, 255, 0.45)";
-  ctx.shadowBlur = isVulnerable ? 12 : 7;
+  ctx.shadowColor = isVulnerable ? "rgba(217, 251, 255, 0.7)" : "rgba(79, 227, 255, 0.45)";
+  ctx.shadowBlur = isVulnerable ? 14 : 7;
 
-  // Tail.
+  if (isVulnerable) {
+    ctx.strokeStyle = "rgba(217, 251, 255, 0.5)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 18, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Forked tail.
   ctx.fillStyle = bodyColor;
   ctx.strokeStyle = strokeColor;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(-12, 0);
-  ctx.lineTo(-23, -8);
-  ctx.lineTo(-20, 0);
-  ctx.lineTo(-23, 8);
+  ctx.moveTo(-13, 0);
+  ctx.lineTo(-25, -10);
+  ctx.lineTo(-21, -1);
+  ctx.lineTo(-26, 7);
+  ctx.lineTo(-15, 5);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // Body and rounded nose.
+  // Smooth body and rounded dolphin nose.
+  const bodyGradient = ctx.createLinearGradient(-15, -10, 17, 10);
+  bodyGradient.addColorStop(0, finColor);
+  bodyGradient.addColorStop(0.5, bodyColor);
+  bodyGradient.addColorStop(1, isVulnerable ? "#5f7189" : "#2f99c7");
+
+  ctx.fillStyle = bodyGradient;
   ctx.beginPath();
-  ctx.ellipse(0, 0, 14, 8, 0, 0, Math.PI * 2);
+  ctx.ellipse(-1, 0, 15, 8.5, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.arc(12, 0, 7, 0, Math.PI * 2);
+  ctx.ellipse(13, 0, 8, 6, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
-  // Curved dorsal fin.
+  // Curved dorsal fin and small lower fin.
   ctx.fillStyle = finColor;
   ctx.beginPath();
-  ctx.moveTo(-4, -7);
-  ctx.quadraticCurveTo(0, -17, 8, -7);
+  ctx.moveTo(-5, -7);
+  ctx.quadraticCurveTo(0, -18, 8, -7);
+  ctx.lineTo(1, -5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(0, 7);
+  ctx.lineTo(7, 13);
+  ctx.lineTo(8, 5);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
@@ -1272,19 +1593,19 @@ function drawDolphinPatrol(enemy) {
   ctx.shadowBlur = 0;
   ctx.fillStyle = "#f4fdff";
   ctx.beginPath();
-  ctx.ellipse(4, 4, 8, 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(5, 4, 9, 3.2, 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = "#06243a";
   ctx.beginPath();
-  ctx.arc(12, -4, 1.8, 0, Math.PI * 2);
+  ctx.arc(13, -4, 1.9, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.strokeStyle = "#17617b";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(10, 4);
-  ctx.quadraticCurveTo(14, 7, 18, 4);
+  ctx.quadraticCurveTo(15, 7, 19, 3);
   ctx.stroke();
 
   ctx.restore();
@@ -1295,56 +1616,77 @@ function drawElectricEel(enemy) {
   const isVulnerable = enemy.state === "vulnerable";
   const isReturning = enemy.state === "returning";
   const pulse = Math.sin(getGameTime() / 90);
-  const bodyColor = isVulnerable ? "#8fa09b" : "#b9f15a";
-  const stripeColor = isVulnerable ? "#d7dfd5" : "#f7ff6a";
+  const bob = Math.cos(getGameTime() / 230 + enemy.startCol) * 1.4;
+  const bodyColor = isVulnerable ? "#879f95" : "#b9f15a";
+  const bellyColor = isVulnerable ? "#d7dfd5" : "#f7ff6a";
+  const sparkColor = isVulnerable ? "rgba(217, 251, 255, 0.7)" : "#fff3a1";
 
   ctx.save();
-  ctx.translate(enemy.x, enemy.y);
+  ctx.translate(enemy.x, enemy.y + bob);
   ctx.rotate(direction.angle);
   ctx.globalAlpha = isReturning ? 0.55 : 1;
-  ctx.shadowColor = isVulnerable ? "rgba(205, 215, 205, 0.55)" : "rgba(247, 255, 106, 0.8)";
-  ctx.shadowBlur = isVulnerable ? 10 : 12 + pulse * 3;
+  ctx.shadowColor = isVulnerable ? "rgba(217, 251, 255, 0.65)" : "rgba(247, 255, 106, 0.85)";
+  ctx.shadowBlur = isVulnerable ? 12 : 13 + pulse * 4;
 
-  // Curvy eel body.
-  ctx.strokeStyle = bodyColor;
-  ctx.lineWidth = 9;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(-18, 4);
-  ctx.quadraticCurveTo(-9, -8, 0, 1);
-  ctx.quadraticCurveTo(9, 10, 18, -2);
-  ctx.stroke();
-
-  ctx.strokeStyle = stripeColor;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(-13, 2);
-  ctx.lineTo(-8, -5);
-  ctx.moveTo(-2, 1);
-  ctx.lineTo(3, 7);
-  ctx.moveTo(9, 2);
-  ctx.lineTo(14, -5);
-  ctx.stroke();
-
-  // Small electric sparks when dangerous.
-  if (!isVulnerable && !isReturning) {
-    ctx.strokeStyle = "#fff3a1";
+  if (isVulnerable) {
+    ctx.strokeStyle = "rgba(217, 251, 255, 0.45)";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(-4, -13);
-    ctx.lineTo(0, -8);
-    ctx.lineTo(-3, -5);
-    ctx.moveTo(10, 10);
-    ctx.lineTo(15, 6);
-    ctx.lineTo(12, 3);
+    ctx.arc(0, 0, 18, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Long curvy eel body.
+  ctx.strokeStyle = bodyColor;
+  ctx.lineWidth = 8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-22, 4);
+  ctx.quadraticCurveTo(-14, -8, -5, 1);
+  ctx.quadraticCurveTo(4, 10, 13, -1);
+  ctx.quadraticCurveTo(18, -7, 22, -3);
+  ctx.stroke();
+
+  ctx.strokeStyle = bellyColor;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-16, 1);
+  ctx.lineTo(-11, -5);
+  ctx.moveTo(-6, 1);
+  ctx.lineTo(-1, 6);
+  ctx.moveTo(5, 2);
+  ctx.lineTo(10, -4);
+  ctx.moveTo(14, -2);
+  ctx.lineTo(18, -6);
+  ctx.stroke();
+
+  // Small electric sparks when dangerous, soft warning ticks when vulnerable.
+  if (!isVulnerable && !isReturning) {
+    ctx.strokeStyle = sparkColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-10, -13);
+    ctx.lineTo(-5, -8);
+    ctx.lineTo(-9, -5);
+    ctx.moveTo(5, 12);
+    ctx.lineTo(11, 7);
+    ctx.lineTo(7, 4);
+    ctx.moveTo(18, 5);
+    ctx.lineTo(23, 1);
+    ctx.lineTo(20, -2);
     ctx.stroke();
   }
 
   // Eye.
   ctx.shadowBlur = 0;
+  ctx.fillStyle = "#f7ff6a";
+  ctx.beginPath();
+  ctx.arc(19, -5, 2.8, 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.fillStyle = "#08283d";
   ctx.beginPath();
-  ctx.arc(15, -5, 2, 0, Math.PI * 2);
+  ctx.arc(20, -5, 1.4, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.restore();
@@ -1354,65 +1696,101 @@ function drawDiverDrone(enemy) {
   const direction = DIRECTIONS[enemy.direction || enemy.startDirection];
   const isVulnerable = enemy.state === "vulnerable";
   const isReturning = enemy.state === "returning";
-  const bodyColor = isVulnerable ? "#9a978e" : "#ffb13b";
+  const bob = Math.sin(getGameTime() / 240 + enemy.startCol) * 1.2;
+  const bodyColor = isVulnerable ? "#9a978e" : "#ff9d33";
   const trimColor = isVulnerable ? "#d5d0c6" : "#ffdf75";
+  const darkTrim = isVulnerable ? "#5f625f" : "#854c1c";
   const spin = getGameTime() / 90;
 
   ctx.save();
-  ctx.translate(enemy.x, enemy.y);
+  ctx.translate(enemy.x, enemy.y + bob);
   ctx.rotate(direction.angle);
   ctx.globalAlpha = isReturning ? 0.55 : 1;
-  ctx.shadowColor = isVulnerable ? "rgba(210, 205, 195, 0.55)" : "rgba(255, 177, 59, 0.7)";
-  ctx.shadowBlur = isVulnerable ? 10 : 12;
+  ctx.shadowColor = isVulnerable ? "rgba(217, 251, 255, 0.65)" : "rgba(255, 177, 59, 0.75)";
+  ctx.shadowBlur = isVulnerable ? 12 : 13;
 
-  // Drone body.
-  ctx.fillStyle = bodyColor;
+  if (isVulnerable) {
+    ctx.strokeStyle = "rgba(217, 251, 255, 0.48)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 19, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Compact mechanical body.
+  const bodyGradient = ctx.createLinearGradient(-12, -10, 13, 10);
+  bodyGradient.addColorStop(0, trimColor);
+  bodyGradient.addColorStop(0.46, bodyColor);
+  bodyGradient.addColorStop(1, darkTrim);
+
+  ctx.fillStyle = bodyGradient;
   ctx.strokeStyle = "#fff0bd";
   ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.rect(-11, -8, 22, 16);
+  drawRoundedRect(-13, -9, 25, 18, 5);
   ctx.fill();
   ctx.stroke();
 
-  // Front sensor.
-  ctx.fillStyle = "#06243a";
+  // Metal side rails.
+  ctx.strokeStyle = darkTrim;
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(8, 0, 4, 0, Math.PI * 2);
+  ctx.moveTo(-9, -5);
+  ctx.lineTo(5, -5);
+  ctx.moveTo(-9, 5);
+  ctx.lineTo(5, 5);
+  ctx.stroke();
+
+  // Front sensor light.
+  ctx.shadowColor = isVulnerable ? "rgba(217, 251, 255, 0.7)" : "rgba(79, 227, 255, 0.75)";
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = "#08283d";
+  ctx.beginPath();
+  ctx.arc(9, 0, 5, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = trimColor;
+  ctx.fillStyle = isVulnerable ? "#d9fbff" : "#4fe3ff";
   ctx.beginPath();
-  ctx.arc(9, -1, 1.5, 0, Math.PI * 2);
+  ctx.arc(10, -1, 2, 0, Math.PI * 2);
   ctx.fill();
+  ctx.shadowBlur = 0;
 
-  // Propellers.
+  // Propeller pod and spinning blades.
+  ctx.fillStyle = darkTrim;
   ctx.strokeStyle = trimColor;
   ctx.lineWidth = 2;
-  [-12, 12].forEach((offsetX) => {
-    ctx.save();
-    ctx.translate(offsetX, -10);
-    ctx.rotate(spin);
-    ctx.beginPath();
-    ctx.moveTo(-5, 0);
-    ctx.lineTo(5, 0);
-    ctx.moveTo(0, -5);
-    ctx.lineTo(0, 5);
-    ctx.stroke();
-    ctx.restore();
-  });
-
-  // Side fins.
-  ctx.fillStyle = trimColor;
   ctx.beginPath();
-  ctx.moveTo(-8, 7);
-  ctx.lineTo(-15, 12);
-  ctx.lineTo(-5, 10);
+  ctx.arc(-13, -11, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.save();
+  ctx.translate(-13, -11);
+  ctx.rotate(spin);
+  ctx.strokeStyle = trimColor;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-7, 0);
+  ctx.lineTo(7, 0);
+  ctx.moveTo(0, -7);
+  ctx.lineTo(0, 7);
+  ctx.stroke();
+  ctx.restore();
+
+  // Side fins help the drone read as a little underwater machine.
+  ctx.fillStyle = bodyColor;
+  ctx.strokeStyle = "#fff0bd";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-8, 8);
+  ctx.lineTo(-17, 13);
+  ctx.lineTo(-6, 12);
   ctx.closePath();
-  ctx.moveTo(4, 7);
-  ctx.lineTo(14, 11);
-  ctx.lineTo(9, 6);
+  ctx.moveTo(4, 8);
+  ctx.lineTo(15, 12);
+  ctx.lineTo(8, 6);
   ctx.closePath();
   ctx.fill();
+  ctx.stroke();
 
   ctx.restore();
 }
@@ -1439,6 +1817,7 @@ function drawEnemies() {
 
 function drawMaze() {
   drawFloorTiles();
+  drawAmbientBubbles();
   drawMazeWalls();
   drawCollectibles();
   drawBoardFrame();
@@ -1575,20 +1954,24 @@ function drawGameOverScreen() {
   });
 }
 
-function drawLevelClearScreen() {
+function drawLevelClearOverlay() {
   drawOverlay({
     title: "LEVEL CLEAR!",
     subtitle: `Level ${currentLevel} Complete`,
     lines: [
+      levelClearMessage || "Jaw-some job!",
       `Bonus: ${LEVEL_CLEAR_BONUS * currentLevel}`,
-      "Next level loading...",
     ],
-    action: "Stay sharp",
+    action: "Press Space or Tap to Continue",
     titleColor: "#4fe3ff",
     glowColor: "rgba(79, 227, 255, 0.9)",
     accentColor: "rgba(79, 227, 255, 0.9)",
     subtitleColor: "#d9fbff",
   });
+}
+
+function drawLevelClearScreen() {
+  drawLevelClearOverlay();
 }
 
 function drawWinScreen() {
@@ -1644,10 +2027,13 @@ function gameLoop() {
     checkPlayerEnemyCollision();
   }
 
+  updateParticles();
+
   if (gameState === GAME_STATE.PLAYING) {
     drawMaze();
     drawPlayerShark();
     drawEnemies();
+    drawParticles();
 
     if (isPaused) {
       drawPauseOverlay();
@@ -1656,14 +2042,17 @@ function gameLoop() {
 
   if (gameState === GAME_STATE.GAME_OVER) {
     drawGameOverScreen();
+    drawParticles();
   }
 
   if (gameState === GAME_STATE.LEVEL_CLEAR) {
     drawLevelClearScreen();
+    drawParticles();
   }
 
   if (gameState === GAME_STATE.WIN) {
     drawWinScreen();
+    drawParticles();
   }
 
   requestAnimationFrame(gameLoop);
