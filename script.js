@@ -88,6 +88,10 @@ const REVERB_WET_GAIN = 0.16;
 const MAX_PARTICLES = 120;
 const SHARK_BUBBLE_INTERVAL_MS = 95;
 const SHARK_CHOMP_BOOST_MS = 280;
+// Slightly faster than the original speed of 2. The center-snap movement code
+// below keeps the shark aligned to the maze grid even with this small bump.
+const SHARK_MOVE_SPEED = 2.25;
+const SHARK_UPPER_JAW_MAX_LIFT = 3;
 
 const LEVEL_CLEAR_MESSAGES = [
   "Jaw-some job!",
@@ -272,7 +276,7 @@ const player = {
   col: playerStart.col,
   direction: null,
   nextDirection: null,
-  speed: 2,
+  speed: SHARK_MOVE_SPEED,
   chompBoostUntil: 0,
 };
 
@@ -828,6 +832,8 @@ function updateEnemyTile(enemy) {
 function isEntityCenteredOnTile(entity) {
   const center = getTileCenter(entity.row, entity.col);
 
+  // The tolerance follows entity.speed, so small speed changes still snap to
+  // tile centers before turns, wall checks, and pickups are handled.
   return (
     Math.abs(entity.x - center.x) <= entity.speed / 2 &&
     Math.abs(entity.y - center.y) <= entity.speed / 2
@@ -1675,6 +1681,13 @@ function getSharkChompAmount() {
   return Math.sin(now / 700) > 0.94 ? 0.26 : 0.04;
 }
 
+function getSharkUpperJawLift(chompAmount) {
+  // The mouth starts almost closed, so the nose should stay in its normal spot.
+  // Once the chomp opens, this lifts the upper jaw/nose a few pixels too.
+  const openAmount = Math.max(0, (chompAmount - 0.14) / 0.86);
+  return openAmount * SHARK_UPPER_JAW_MAX_LIFT;
+}
+
 function drawSharkTeeth(chompAmount, upperLipY, lowerLipY) {
   const topToothHeight = 2.4 + chompAmount * 2.2;
   const bottomToothHeight = 2 + chompAmount * 1.8;
@@ -1703,7 +1716,8 @@ function drawSharkTeeth(chompAmount, upperLipY, lowerLipY) {
 }
 
 function drawSharkMouth(chompAmount, isFrenzy) {
-  const upperLipY = 2 - chompAmount * 5.5;
+  const upperJawLift = getSharkUpperJawLift(chompAmount);
+  const upperLipY = 2 - chompAmount * 5.5 - upperJawLift * 0.25;
   const lowerLipY = 3.5 + chompAmount * 7;
   const mouthBackX = 12.5;
   const mouthTipX = 23;
@@ -1713,8 +1727,8 @@ function drawSharkMouth(chompAmount, isFrenzy) {
     ctx.strokeStyle = isFrenzy ? "#7f1f1b" : "#1d3d4f";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(12, 3);
-    ctx.quadraticCurveTo(17, 7, 22, 2);
+    ctx.moveTo(12, 3 - upperJawLift * 0.15);
+    ctx.quadraticCurveTo(17, 7, 22, 2 - upperJawLift * 0.4);
     ctx.stroke();
 
     ctx.strokeStyle = "#f3fbff";
@@ -1731,7 +1745,7 @@ function drawSharkMouth(chompAmount, isFrenzy) {
   // Open-mouth pose: dark wedge, bright lips, and visible cartoon teeth.
   ctx.fillStyle = isFrenzy ? "#4f130f" : "#07131f";
   ctx.beginPath();
-  ctx.moveTo(mouthBackX, 1.5);
+  ctx.moveTo(mouthBackX, 1.5 - upperJawLift * 0.15);
   ctx.lineTo(mouthTipX, upperLipY);
   ctx.lineTo(mouthTipX - 1, lowerLipY);
   ctx.quadraticCurveTo(17, lowerLipY + 1.5, mouthBackX, 4.5);
@@ -1741,7 +1755,7 @@ function drawSharkMouth(chompAmount, isFrenzy) {
   ctx.strokeStyle = isFrenzy ? "#ffd4c7" : "#d9fbff";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
-  ctx.moveTo(mouthBackX, 1.5);
+  ctx.moveTo(mouthBackX, 1.5 - upperJawLift * 0.15);
   ctx.lineTo(mouthTipX, upperLipY);
   ctx.moveTo(mouthBackX, 4.5);
   ctx.quadraticCurveTo(17, lowerLipY + 1.5, mouthTipX - 1, lowerLipY);
@@ -1769,12 +1783,15 @@ function drawSharkTail() {
   ctx.stroke();
 }
 
-function drawSharkBody() {
-  // Longer torpedo body with an arched back and flatter underside.
+function drawSharkBody(chompAmount) {
+  const upperJawLift = getSharkUpperJawLift(chompAmount);
+
+  // Longer torpedo body with an arched back and flatter underside. During an
+  // open chomp, the nose tip and upper snout lift slightly with the upper jaw.
   ctx.beginPath();
   ctx.moveTo(-18, -6.4);
-  ctx.quadraticCurveTo(-2, -13.2, 18, -5.2);
-  ctx.quadraticCurveTo(24, -2.6, 26, 0);
+  ctx.quadraticCurveTo(-2, -13.2, 18, -5.2 - upperJawLift * 0.35);
+  ctx.quadraticCurveTo(24, -2.6 - upperJawLift * 0.75, 26, -upperJawLift);
   ctx.quadraticCurveTo(20, 3.8, 6, 5.8);
   ctx.lineTo(-12, 5.8);
   ctx.quadraticCurveTo(-19, 4.2, -21, 0.4);
@@ -1811,6 +1828,27 @@ function drawSharkBelly() {
   ctx.fill();
 }
 
+function drawSharkEye(chompAmount) {
+  const upperJawLift = getSharkUpperJawLift(chompAmount);
+  const eyeY = -5 - upperJawLift * 0.35;
+
+  // The eye rides with the upper jaw so the whole snout feels hinged upward.
+  ctx.fillStyle = "#f8fdff";
+  ctx.beginPath();
+  ctx.arc(11, eyeY, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#07131f";
+  ctx.beginPath();
+  ctx.arc(12, eyeY, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#d9fbff";
+  ctx.beginPath();
+  ctx.arc(10.6, eyeY - 1.1, 0.7, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function drawPlayerShark() {
   const facing = player.direction || player.nextDirection || "right";
   const direction = DIRECTIONS[facing];
@@ -1843,27 +1881,14 @@ function drawPlayerShark() {
   ctx.lineWidth = 2;
 
   drawSharkTail();
-  drawSharkBody();
+  drawSharkBody(chompAmount);
   drawSharkDorsalFin(isFrenzy);
   drawSharkBelly();
 
-  // Larger eye with a tiny highlight for cartoon expression.
-  ctx.fillStyle = "#f8fdff";
-  ctx.beginPath();
-  ctx.arc(11, -5, 3, 0, Math.PI * 2);
-  ctx.fill();
+  drawSharkEye(chompAmount);
 
-  ctx.fillStyle = "#07131f";
-  ctx.beginPath();
-  ctx.arc(12, -5, 1.5, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = "#d9fbff";
-  ctx.beginPath();
-  ctx.arc(10.6, -6.1, 0.7, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Animated jaw: opens wider while moving and snaps open on pickups/chomps.
+  // Animated jaws: the lower jaw drops while the upper jaw/nose lifts, all in
+  // local shark coordinates before direction rotation is restored.
   drawSharkMouth(chompAmount, isFrenzy);
 
   ctx.restore();
