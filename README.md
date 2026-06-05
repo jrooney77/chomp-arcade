@@ -16,6 +16,8 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - Lives, Game Over screen, and restart flow.
 - Frenzy Mode from Frenzy Bait, with vulnerable enemies and bonus points.
 - Larger responsive arcade display for desktop, tablets, and phones.
+- Three-level progression with Level Clear and You Win screens.
+- Debug mode for faster local testing.
 - No external libraries.
 
 ## Scoring
@@ -29,9 +31,10 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 ## Frenzy Mode
 
 - Collecting Frenzy Bait starts a 7-second Frenzy Mode.
+- Later levels shorten Frenzy Mode slightly.
 - During Frenzy Mode, the shark glows and enemies become vulnerable.
 - Touching a vulnerable enemy awards bonus points and sends that enemy back to spawn.
-- Losing a life or restarting clears Frenzy Mode.
+- Losing a life, changing levels, or restarting clears Frenzy Mode.
 
 ## Enemies
 
@@ -48,6 +51,22 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - CSS plus a small resize helper scale the canvas larger on desktop for a fuller arcade feel.
 - On tablets and phones, the canvas scales to fit the viewport without distorting the maze.
 - Touch controls use swipe distance, so visual scaling does not break mobile movement.
+
+## Levels
+
+- The game has 3 levels.
+- Collecting all chum clears the current level. Frenzy Bait is optional for clearing.
+- Score and lives carry forward between levels.
+- The maze, shark position, and enemy positions reset for each new level.
+- Level 3 increases enemy speed while keeping movement aligned to the tile grid.
+- Clearing level 3 shows the You Win screen.
+
+## Debug Mode
+
+- Press `D` to toggle Debug Mode.
+- When Debug Mode is on, enemies are hidden, do not move, and cannot collide with the shark.
+- Press `L` while Debug Mode is on to instantly clear the current level.
+- Debug Mode is for local testing and does not remove collectibles or skip score/life reset behavior.
 
 ## Maze Grid
 
@@ -79,3 +98,4 @@ To test the game:
 10. Touch enemies outside Frenzy Mode and confirm lives decrease.
 11. Lose all lives, then press Space or tap to restart.
 12. Try the game in a narrow browser window or on a phone and confirm the canvas stays centered and playable.
+13. Press `D`, then `L` to quickly test Level Clear, level progression, and the You Win screen.

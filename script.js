@@ -6,8 +6,10 @@ const ctx = canvas.getContext("2d");
 const scoreValueElement = document.getElementById("scoreValue");
 const chumValueElement = document.getElementById("chumValue");
 const livesValueElement = document.getElementById("livesValue");
+const levelValueElement = document.getElementById("levelValue");
 const frenzyHudElement = document.getElementById("frenzyHud");
 const frenzyValueElement = document.getElementById("frenzyValue");
+const debugHudElement = document.getElementById("debugHud");
 const gameHeaderElement = document.querySelector(".game-header");
 const gameHudElement = document.querySelector(".game-hud");
 
@@ -39,7 +41,9 @@ function resizeCanvasDisplay() {
 const GAME_STATE = {
   START: "start",
   PLAYING: "playing",
+  LEVEL_CLEAR: "levelClear",
   GAME_OVER: "gameOver",
+  WIN: "win",
 };
 
 let gameState = GAME_STATE.START;
@@ -60,9 +64,13 @@ const SCORE_VALUES = {
 
 const STARTING_LIVES = 3;
 const PLAYER_HIT_DISTANCE = 22;
-const FRENZY_DURATION_MS = 7000;
+const BASE_FRENZY_DURATION_MS = 7000;
+const MIN_FRENZY_DURATION_MS = 5500;
 const FRENZY_CHOMP_SCORES = [200, 400, 800, 1600];
 const ENEMY_RETURN_MS = 1000;
+const TOTAL_LEVELS = 3;
+const LEVEL_CLEAR_BONUS = 500;
+const LEVEL_CLEAR_DELAY_MS = 1200;
 
 const ENEMY_SPEEDS = {
   dolphinPatrol: 1,
@@ -90,45 +98,103 @@ const KEY_TO_DIRECTION = {
 };
 
 // 0 = wall, 1 = path, 2 = chum, 3 = frenzy bait, 4 = empty water.
-// This layout is intentionally simple while leaving room for later shark movement.
-const INITIAL_MAZE = [
-  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [0, 3, 2, 2, 2, 0, 2, 2, 2, 4, 2, 2, 2, 0, 2, 2, 2, 3, 0],
-  [0, 2, 0, 0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 0],
-  [0, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 0],
-  [0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0],
-  [0, 2, 2, 2, 0, 4, 2, 2, 2, 1, 2, 2, 2, 4, 0, 2, 2, 2, 0],
-  [0, 0, 0, 2, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0, 2, 0, 0, 0],
-  [0, 4, 2, 2, 2, 2, 0, 1, 1, 4, 1, 1, 0, 2, 2, 2, 2, 4, 0],
-  [0, 0, 0, 2, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0, 2, 0, 0, 0],
-  [0, 2, 2, 2, 0, 4, 2, 2, 2, 1, 2, 2, 2, 4, 0, 2, 2, 2, 0],
-  [0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0],
-  [0, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 0],
-  [0, 2, 0, 0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 0],
-  [0, 3, 2, 2, 2, 0, 2, 2, 2, 4, 2, 2, 2, 0, 2, 2, 2, 3, 0],
-  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+// Each level owns its maze, shark start, and enemy starts. The loader clones
+// the maze so collection can edit the current level without changing templates.
+const LEVELS = [
+  {
+    maze: [
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 3, 2, 2, 2, 0, 2, 2, 2, 4, 2, 2, 2, 0, 2, 2, 2, 3, 0],
+      [0, 2, 0, 0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 0],
+      [0, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 0, 4, 2, 2, 2, 1, 2, 2, 2, 4, 0, 2, 2, 2, 0],
+      [0, 0, 0, 2, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0, 2, 0, 0, 0],
+      [0, 4, 2, 2, 2, 2, 0, 1, 1, 4, 1, 1, 0, 2, 2, 2, 2, 4, 0],
+      [0, 0, 0, 2, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0, 2, 0, 0, 0],
+      [0, 2, 2, 2, 0, 4, 2, 2, 2, 1, 2, 2, 2, 4, 0, 2, 2, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 0],
+      [0, 2, 0, 0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 0],
+      [0, 3, 2, 2, 2, 0, 2, 2, 2, 4, 2, 2, 2, 0, 2, 2, 2, 3, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    playerStart: { row: 13, col: 9 },
+    enemyStarts: [
+      { type: "dolphinPatrol", row: 7, col: 10, direction: "right" },
+      { type: "electricEel", row: 7, col: 17, direction: "left" },
+      { type: "diverDrone", row: 5, col: 9, direction: "left" },
+    ],
+  },
+  {
+    maze: [
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 2, 2, 2, 2, 2, 0, 3, 2, 4, 2, 3, 0, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0],
+      [0, 2, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2, 2, 0],
+      [0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0],
+      [0, 3, 2, 2, 2, 2, 0, 2, 2, 4, 2, 2, 0, 2, 2, 2, 2, 3, 0],
+      [0, 2, 0, 0, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0, 0, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 1, 1, 4, 1, 1, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 0, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0, 0, 0, 2, 0],
+      [0, 3, 2, 2, 2, 2, 0, 2, 2, 4, 2, 2, 0, 2, 2, 2, 2, 3, 0],
+      [0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0],
+      [0, 2, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2, 2, 0],
+      [0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 0, 2, 2, 4, 2, 2, 0, 2, 2, 2, 2, 2, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    playerStart: { row: 13, col: 9 },
+    enemyStarts: [
+      { type: "dolphinPatrol", row: 7, col: 8, direction: "right" },
+      { type: "electricEel", row: 5, col: 17, direction: "left" },
+      { type: "diverDrone", row: 9, col: 1, direction: "right" },
+    ],
+  },
+  {
+    maze: [
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 3, 2, 2, 2, 0, 2, 2, 2, 3, 2, 2, 2, 0, 2, 2, 2, 3, 0],
+      [0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0],
+      [0, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 0, 2, 2, 0],
+      [0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0],
+      [0, 2, 2, 2, 2, 0, 2, 2, 2, 4, 2, 2, 2, 0, 2, 2, 2, 2, 0],
+      [0, 2, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 2, 0],
+      [0, 2, 2, 0, 2, 2, 2, 1, 1, 4, 1, 1, 2, 2, 2, 0, 2, 2, 0],
+      [0, 2, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 2, 0],
+      [0, 2, 2, 2, 2, 0, 2, 2, 2, 4, 2, 2, 2, 0, 2, 2, 2, 2, 0],
+      [0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0],
+      [0, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 0, 2, 2, 0],
+      [0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0],
+      [0, 3, 2, 2, 2, 0, 2, 2, 2, 4, 2, 2, 2, 0, 2, 2, 2, 3, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    playerStart: { row: 13, col: 9 },
+    enemyStarts: [
+      { type: "dolphinPatrol", row: 7, col: 10, direction: "right" },
+      { type: "electricEel", row: 5, col: 1, direction: "right" },
+      { type: "diverDrone", row: 9, col: 17, direction: "left" },
+    ],
+  },
 ];
 
-let maze = cloneMaze(INITIAL_MAZE);
+let currentLevel = 1;
+let currentLayout = LEVELS[0];
+let maze = cloneMaze(currentLayout.maze);
 let score = 0;
 let lives = STARTING_LIVES;
 let remainingChum = countRemainingChum();
+let debugMode = false;
+let levelClearReady = false;
+let levelClearTimeoutId = null;
 let frenzyMode = {
   active: false,
   endTime: 0,
   chompCount: 0,
 };
 
-const PLAYER_START = {
-  row: 13,
-  col: 9,
-};
-
-const ENEMY_STARTS = [
-  { type: "dolphinPatrol", row: 7, col: 10, direction: "right" },
-  { type: "electricEel", row: 7, col: 17, direction: "left" },
-  { type: "diverDrone", row: 5, col: 9, direction: "left" },
-];
+let playerStart = { ...currentLayout.playerStart };
+let enemyStarts = currentLayout.enemyStarts.map((enemyStart) => ({ ...enemyStart }));
 
 function getTileCenter(row, col) {
   return {
@@ -137,29 +203,36 @@ function getTileCenter(row, col) {
   };
 }
 
-const playerStartCenter = getTileCenter(PLAYER_START.row, PLAYER_START.col);
+const playerStartCenter = getTileCenter(playerStart.row, playerStart.col);
 
 const player = {
   x: playerStartCenter.x,
   y: playerStartCenter.y,
-  row: PLAYER_START.row,
-  col: PLAYER_START.col,
+  row: playerStart.row,
+  col: playerStart.col,
   direction: null,
   nextDirection: null,
   speed: 2,
 };
 
-const enemies = ENEMY_STARTS.map((enemyStart) => (
+let enemies = enemyStarts.map((enemyStart) => (
   createEnemy(enemyStart.type, enemyStart.row, enemyStart.col, enemyStart.direction)
 ));
 
 function startGame() {
   if (gameState === GAME_STATE.START) {
     gameState = GAME_STATE.PLAYING;
+    updateStatusDisplay();
+    return;
   }
 
-  if (gameState === GAME_STATE.GAME_OVER) {
-    restartGame();
+  if (gameState === GAME_STATE.LEVEL_CLEAR && levelClearReady) {
+    advanceToNextLevel();
+    return;
+  }
+
+  if (gameState === GAME_STATE.GAME_OVER || gameState === GAME_STATE.WIN) {
+    resetGame();
   }
 }
 
@@ -190,6 +263,39 @@ function updateScoreDisplay() {
   scoreValueElement.textContent = score;
   chumValueElement.textContent = remainingChum;
   livesValueElement.textContent = lives;
+  levelValueElement.textContent = currentLevel;
+}
+
+function updateDebugDisplay() {
+  if (debugMode) {
+    debugHudElement.classList.remove("is-hidden");
+  } else {
+    debugHudElement.classList.add("is-hidden");
+  }
+}
+
+function updateStatusDisplay() {
+  updateScoreDisplay();
+  updateDebugDisplay();
+}
+
+// Debug mode is intentionally simple and local-test friendly. It hides enemies,
+// stops enemy movement, and skips enemy collision without changing collectibles
+// or level progression.
+function toggleDebugMode() {
+  debugMode = !debugMode;
+  updateDebugDisplay();
+  resizeCanvasDisplay();
+}
+
+function debugClearCurrentLevel() {
+  if (!debugMode || gameState !== GAME_STATE.PLAYING) {
+    return;
+  }
+
+  remainingChum = 0;
+  updateStatusDisplay();
+  startLevelClear();
 }
 
 function updateFrenzyDisplay() {
@@ -210,7 +316,7 @@ function startFrenzyMode() {
   }
 
   frenzyMode.active = true;
-  frenzyMode.endTime = performance.now() + FRENZY_DURATION_MS;
+  frenzyMode.endTime = performance.now() + getFrenzyDuration();
   frenzyMode.chompCount = 0;
 
   enemies.forEach((enemy) => {
@@ -254,15 +360,53 @@ function updateFrenzyMode() {
   updateFrenzyDisplay();
 }
 
-function restartGame() {
-  maze = cloneMaze(INITIAL_MAZE);
-  score = 0;
-  lives = STARTING_LIVES;
+function getLevelConfig(levelNumber) {
+  const levelIndex = (levelNumber - 1) % LEVELS.length;
+  return LEVELS[levelIndex];
+}
+
+function getLevelEnemySpeed(type) {
+  const baseSpeed = ENEMY_SPEEDS[type] || 1;
+
+  // Enemy speed stays tile-safe: 1 and 2 both divide evenly into 32px tiles,
+  // so enemies still snap cleanly to corridor centers.
+  if (currentLevel >= 3) {
+    return Math.min(2, baseSpeed + 1);
+  }
+
+  return baseSpeed;
+}
+
+function getFrenzyDuration() {
+  const levelReduction = (currentLevel - 1) * 350;
+  return Math.max(MIN_FRENZY_DURATION_MS, BASE_FRENZY_DURATION_MS - levelReduction);
+}
+
+function loadLevel(levelNumber) {
+  currentLevel = levelNumber;
+  currentLayout = getLevelConfig(currentLevel);
+  maze = cloneMaze(currentLayout.maze);
+  playerStart = { ...currentLayout.playerStart };
+  enemyStarts = currentLayout.enemyStarts.map((enemyStart) => ({ ...enemyStart }));
   remainingChum = countRemainingChum();
+  levelClearReady = false;
   endFrenzyMode();
   resetPlayerPosition();
-  resetEnemies();
-  updateScoreDisplay();
+  rebuildEnemies();
+  updateStatusDisplay();
+}
+
+function resetGame() {
+  if (levelClearTimeoutId) {
+    clearTimeout(levelClearTimeoutId);
+    levelClearTimeoutId = null;
+  }
+
+  currentLevel = 1;
+  score = 0;
+  lives = STARTING_LIVES;
+  levelClearReady = false;
+  loadLevel(currentLevel);
   gameState = GAME_STATE.PLAYING;
 }
 
@@ -337,12 +481,12 @@ function snapPlayerToTileCenter() {
 }
 
 function resetPlayerPosition() {
-  const center = getTileCenter(PLAYER_START.row, PLAYER_START.col);
+  const center = getTileCenter(playerStart.row, playerStart.col);
 
   player.x = center.x;
   player.y = center.y;
-  player.row = PLAYER_START.row;
-  player.col = PLAYER_START.col;
+  player.row = playerStart.row;
+  player.col = playerStart.col;
   player.direction = null;
   player.nextDirection = null;
 }
@@ -356,8 +500,7 @@ function collectTile() {
     maze[player.row][player.col] = TILE.EMPTY;
     remainingChum -= 1;
     updateScore(SCORE_VALUES.CHUM);
-
-    // TODO: Add a level-clear condition when remainingChum reaches 0.
+    checkLevelClear();
     return;
   }
 
@@ -366,6 +509,59 @@ function collectTile() {
     updateScore(SCORE_VALUES.FRENZY_BAIT);
     startFrenzyMode();
   }
+}
+
+function checkLevelClear() {
+  if (remainingChum <= 0 && gameState === GAME_STATE.PLAYING) {
+    startLevelClear();
+  }
+}
+
+function startLevelClear() {
+  gameState = GAME_STATE.LEVEL_CLEAR;
+  levelClearReady = false;
+  player.direction = null;
+  player.nextDirection = null;
+  updateScore(LEVEL_CLEAR_BONUS * currentLevel);
+  endFrenzyMode();
+  updateStatusDisplay();
+
+  if (levelClearTimeoutId) {
+    clearTimeout(levelClearTimeoutId);
+  }
+
+  levelClearTimeoutId = setTimeout(() => {
+    levelClearReady = true;
+    advanceToNextLevel();
+  }, LEVEL_CLEAR_DELAY_MS);
+}
+
+function advanceToNextLevel() {
+  if (gameState !== GAME_STATE.LEVEL_CLEAR) {
+    return;
+  }
+
+  if (levelClearTimeoutId) {
+    clearTimeout(levelClearTimeoutId);
+    levelClearTimeoutId = null;
+  }
+
+  if (currentLevel >= TOTAL_LEVELS) {
+    startWin();
+    return;
+  }
+
+  gameState = GAME_STATE.PLAYING;
+  loadLevel(currentLevel + 1);
+}
+
+function startWin() {
+  gameState = GAME_STATE.WIN;
+  levelClearReady = false;
+  endFrenzyMode();
+  resetPlayerPosition();
+  resetEnemies();
+  updateStatusDisplay();
 }
 
 function movePlayer() {
@@ -377,6 +573,10 @@ function movePlayer() {
     snapPlayerToTileCenter();
     updatePlayerTile();
     collectTile();
+
+    if (gameState !== GAME_STATE.PLAYING) {
+      return;
+    }
 
     if (canMove(player.nextDirection)) {
       player.direction = player.nextDirection;
@@ -411,7 +611,7 @@ function createEnemy(type, row, col, direction) {
     row,
     col,
     direction,
-    speed: ENEMY_SPEEDS[type] || 1,
+    speed: getLevelEnemySpeed(type),
     type,
     state: "normal",
     isVulnerable: false,
@@ -529,6 +729,10 @@ function chooseEnemyDirection(enemy) {
 }
 
 function updateEnemies() {
+  if (debugMode) {
+    return;
+  }
+
   enemies.forEach((enemy) => {
     if (enemy.state === "returning") {
       if (performance.now() >= enemy.returnUntil) {
@@ -570,9 +774,16 @@ function resetEnemyPosition(enemy) {
   enemy.row = enemy.startRow;
   enemy.col = enemy.startCol;
   enemy.direction = enemy.startDirection;
+  enemy.speed = getLevelEnemySpeed(enemy.type);
   enemy.state = "normal";
   enemy.isVulnerable = false;
   enemy.returnUntil = 0;
+}
+
+function rebuildEnemies() {
+  enemies = enemyStarts.map((enemyStart) => (
+    createEnemy(enemyStart.type, enemyStart.row, enemyStart.col, enemyStart.direction)
+  ));
 }
 
 function resetEnemies() {
@@ -596,6 +807,10 @@ function loseLife() {
 }
 
 function checkPlayerEnemyCollision() {
+  if (debugMode) {
+    return;
+  }
+
   for (let i = 0; i < enemies.length; i += 1) {
     const enemy = enemies[i];
     const distance = Math.hypot(player.x - enemy.x, player.y - enemy.y);
@@ -970,6 +1185,10 @@ function drawDiverDrone(enemy) {
 }
 
 function drawEnemies() {
+  if (debugMode) {
+    return;
+  }
+
   enemies.forEach((enemy) => {
     if (enemy.type === "dolphinPatrol") {
       drawDolphinPatrol(enemy);
@@ -1077,6 +1296,75 @@ function drawGameOverScreen() {
   ctx.fillText("Press Space or Tap to Restart", centerX, 320);
 }
 
+function drawLevelClearScreen() {
+  const centerX = canvas.width / 2;
+
+  ctx.fillStyle = "#041827";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "rgba(79, 227, 255, 0.1)";
+  for (let i = 0; i < 18; i += 1) {
+    ctx.beginPath();
+    ctx.arc((i * 71) % canvas.width, 55 + ((i * 53) % 360), 18, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.fillStyle = "#4fe3ff";
+  ctx.font = "bold 56px Trebuchet MS, Lucida Console, monospace";
+  ctx.shadowColor = "rgba(79, 227, 255, 0.9)";
+  ctx.shadowBlur = 14;
+  ctx.fillText("LEVEL CLEAR!", centerX, 150);
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#d9fbff";
+  ctx.font = "bold 24px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText(`Level ${currentLevel} Complete`, centerX, 226);
+
+  ctx.fillStyle = "#ffcf5c";
+  ctx.font = "20px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText(`Bonus: ${LEVEL_CLEAR_BONUS * currentLevel}`, centerX, 274);
+
+  ctx.fillStyle = "#ffb7bf";
+  ctx.font = "bold 20px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText("Next level loading...", centerX, 340);
+}
+
+function drawWinScreen() {
+  const centerX = canvas.width / 2;
+
+  ctx.fillStyle = "#041827";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "rgba(255, 207, 92, 0.12)";
+  for (let i = 0; i < 20; i += 1) {
+    ctx.beginPath();
+    ctx.arc((i * 59) % canvas.width, 50 + ((i * 67) % 380), 20, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.fillStyle = "#ffcf5c";
+  ctx.font = "bold 64px Trebuchet MS, Lucida Console, monospace";
+  ctx.shadowColor = "rgba(255, 207, 92, 0.9)";
+  ctx.shadowBlur = 16;
+  ctx.fillText("YOU WIN!", centerX, 140);
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#d9fbff";
+  ctx.font = "bold 24px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText(`Final Score: ${score}`, centerX, 226);
+  ctx.fillText(`Levels Cleared: ${TOTAL_LEVELS}`, centerX, 266);
+
+  ctx.fillStyle = "#ffb7bf";
+  ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText("Press Space or Tap to Restart", centerX, 342);
+}
+
 function clearCanvas() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
@@ -1105,11 +1393,31 @@ function gameLoop() {
     drawGameOverScreen();
   }
 
+  if (gameState === GAME_STATE.LEVEL_CLEAR) {
+    drawLevelClearScreen();
+  }
+
+  if (gameState === GAME_STATE.WIN) {
+    drawWinScreen();
+  }
+
   requestAnimationFrame(gameLoop);
 }
 
 window.addEventListener("keydown", (event) => {
   const direction = KEY_TO_DIRECTION[event.code];
+
+  if (event.code === "KeyD") {
+    event.preventDefault();
+    toggleDebugMode();
+    return;
+  }
+
+  if (event.code === "KeyL") {
+    event.preventDefault();
+    debugClearCurrentLevel();
+    return;
+  }
 
   if (direction) {
     event.preventDefault();
