@@ -53,6 +53,37 @@ body {
   font-size: clamp(1rem, 3vw, 1.3rem);
 }
 
+.game-hud {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin: 0 auto 12px;
+}
+
+.hud-item {
+  min-width: 136px;
+  padding: 8px 12px;
+  color: var(--foam);
+  text-align: left;
+  background: rgba(4, 24, 39, 0.86);
+  border: 2px solid rgba(79, 227, 255, 0.82);
+}
+
+.hud-label {
+  display: block;
+  margin-bottom: 2px;
+  color: #ffb7bf;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+#scoreValue,
+#chumValue {
+  display: block;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
 #gameCanvas {
   display: block;
   width: min(100%, 608px);
@@ -75,6 +106,16 @@ body {
 
   .game-header {
     margin-bottom: 12px;
+  }
+
+  .game-hud {
+    gap: 8px;
+  }
+
+  .hud-item {
+    min-width: 0;
+    flex: 1;
+    padding: 7px 9px;
   }
 
   #gameCanvas {

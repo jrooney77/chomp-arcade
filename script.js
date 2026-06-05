@@ -3,6 +3,8 @@
 
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
+const scoreValueElement = document.getElementById("scoreValue");
+const chumValueElement = document.getElementById("chumValue");
 
 // A tile size of 32 gives us a clear retro maze grid.
 const TILE_SIZE = 32;
@@ -27,6 +29,11 @@ const TILE = {
   CHUM: 2,
   FRENZY_BAIT: 3,
   EMPTY: 4,
+};
+
+const SCORE_VALUES = {
+  CHUM: 10,
+  FRENZY_BAIT: 50,
 };
 
 // Directions use both tile movement (row/col) and canvas movement (x/y).
@@ -68,6 +75,9 @@ const maze = [
   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ];
 
+let score = 0;
+let remainingChum = countRemainingChum();
+
 const PLAYER_START = {
   row: 7,
   col: 9,
@@ -96,6 +106,30 @@ function startGame() {
   if (gameState === GAME_STATE.START) {
     gameState = GAME_STATE.PLAYING;
   }
+}
+
+function countRemainingChum() {
+  let total = 0;
+
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      if (maze[row][col] === TILE.CHUM) {
+        total += 1;
+      }
+    }
+  }
+
+  return total;
+}
+
+function updateScore(points) {
+  score += points;
+  updateScoreDisplay();
+}
+
+function updateScoreDisplay() {
+  scoreValueElement.textContent = score;
+  chumValueElement.textContent = remainingChum;
 }
 
 function setPlayerNextDirection(direction) {
@@ -155,6 +189,28 @@ function snapPlayerToTileCenter() {
   player.y = center.y;
 }
 
+function collectTile() {
+  const tile = maze[player.row][player.col];
+
+  // Collection happens only when the shark reaches a tile center. The tile is
+  // then changed to EMPTY so it cannot be collected again.
+  if (tile === TILE.CHUM) {
+    maze[player.row][player.col] = TILE.EMPTY;
+    remainingChum -= 1;
+    updateScore(SCORE_VALUES.CHUM);
+
+    // TODO: Add a level-clear condition when remainingChum reaches 0.
+    return;
+  }
+
+  if (tile === TILE.FRENZY_BAIT) {
+    maze[player.row][player.col] = TILE.EMPTY;
+    updateScore(SCORE_VALUES.FRENZY_BAIT);
+
+    // TODO: Trigger Frenzy Mode here in a future update.
+  }
+}
+
 function movePlayer() {
   updatePlayerTile();
 
@@ -163,6 +219,7 @@ function movePlayer() {
   if (isPlayerCenteredOnTile()) {
     snapPlayerToTileCenter();
     updatePlayerTile();
+    collectTile();
 
     if (canMove(player.nextDirection)) {
       player.direction = player.nextDirection;
@@ -443,4 +500,5 @@ canvas.addEventListener("touchcancel", () => {
   touchStarted = false;
 });
 
+updateScoreDisplay();
 gameLoop();

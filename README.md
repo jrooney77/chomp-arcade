@@ -10,7 +10,15 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - Tile-based maze rendered on the canvas.
 - Cartoon player shark with smooth maze movement.
 - Arrow Key, WASD, and mobile swipe controls.
+- Chum and Frenzy Bait collection with score tracking.
+- Remaining chum counter during gameplay.
 - No external libraries.
+
+## Scoring
+
+- Chum is worth 10 points.
+- Frenzy Bait is worth 50 points.
+- Collected items disappear from the maze.
 
 ## Maze Grid
 
@@ -36,3 +44,4 @@ To test the game:
 4. Confirm the maze appears with the shark in the center path.
 5. Move with Arrow Keys or WASD.
 6. On mobile, tap to start and swipe on the canvas to turn the shark.
+7. Swim over chum or Frenzy Bait and confirm the score updates.
