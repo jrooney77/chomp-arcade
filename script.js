@@ -949,58 +949,200 @@ function handleEnemyCollision(enemy) {
   loseLife();
 }
 
-function drawWaterTile(x, y) {
-  ctx.fillStyle = "#06243a";
-  ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+const REEF_BUBBLES = [
+  { x: 36, y: 70, size: 5 },
+  { x: 132, y: 402, size: 3 },
+  { x: 242, y: 118, size: 4 },
+  { x: 354, y: 354, size: 3 },
+  { x: 472, y: 84, size: 5 },
+  { x: 554, y: 292, size: 4 },
+];
 
-  ctx.fillStyle = "rgba(79, 227, 255, 0.08)";
-  ctx.fillRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+function drawRoundedRect(x, y, width, height, radius) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
 }
 
+// drawFloorTiles() paints the dark water corridors before any walls or actors.
+function drawWaterTile(x, y) {
+  const tileColumn = x / TILE_SIZE;
+  const tileRow = y / TILE_SIZE;
+  const tone = (tileColumn * 7 + tileRow * 11) % 5;
+  const shimmer = Math.sin(getGameTime() / 900 + tileColumn * 0.7 + tileRow * 0.45) * 0.018;
+  const waterGradient = ctx.createLinearGradient(x, y, x + TILE_SIZE, y + TILE_SIZE);
+
+  waterGradient.addColorStop(0, `rgba(5, 31, 52, ${0.98 + shimmer})`);
+  waterGradient.addColorStop(0.55, `rgba(7, 39, 62, ${0.98 + shimmer})`);
+  waterGradient.addColorStop(1, `rgba(3, 21, 36, ${0.98 + shimmer})`);
+  ctx.fillStyle = waterGradient;
+  ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+
+  ctx.fillStyle = tone % 2 === 0 ? "rgba(79, 227, 255, 0.045)" : "rgba(43, 214, 187, 0.035)";
+  ctx.fillRect(x + 3, y + 3, TILE_SIZE - 6, TILE_SIZE - 6);
+
+  ctx.strokeStyle = "rgba(159, 237, 255, 0.035)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + 7, y + 22 + tone);
+  ctx.quadraticCurveTo(x + 16, y + 17 + tone, x + 25, y + 21);
+  ctx.stroke();
+}
+
+function drawFloorTiles() {
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      drawWaterTile(col * TILE_SIZE, row * TILE_SIZE);
+    }
+  }
+}
+
+// drawMazeWalls() keeps the walls readable while giving them reef-stone texture.
 function drawWallTile(x, y) {
   const gradient = ctx.createLinearGradient(x, y, x + TILE_SIZE, y + TILE_SIZE);
-  gradient.addColorStop(0, "#9c6544");
-  gradient.addColorStop(0.55, "#6e4938");
-  gradient.addColorStop(1, "#3f2f35");
+  gradient.addColorStop(0, "#59a9a1");
+  gradient.addColorStop(0.42, "#2f6f6f");
+  gradient.addColorStop(0.72, "#254d5f");
+  gradient.addColorStop(1, "#173245");
 
   ctx.fillStyle = gradient;
-  ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
-
-  ctx.strokeStyle = "rgba(255, 135, 112, 0.45)";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
-
-  ctx.fillStyle = "rgba(255, 190, 150, 0.25)";
-  ctx.beginPath();
-  ctx.arc(x + 10, y + 10, 3, 0, Math.PI * 2);
-  ctx.arc(x + 23, y + 21, 2, 0, Math.PI * 2);
+  drawRoundedRect(x + 1, y + 1, TILE_SIZE - 2, TILE_SIZE - 2, 7);
   ctx.fill();
+
+  ctx.strokeStyle = "rgba(217, 251, 255, 0.22)";
+  ctx.lineWidth = 2;
+  drawRoundedRect(x + 3, y + 3, TILE_SIZE - 6, TILE_SIZE - 6, 5);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255, 155, 135, 0.34)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + 8, y + 11);
+  ctx.quadraticCurveTo(x + 14, y + 8, x + 21, y + 13);
+  ctx.moveTo(x + 18, y + 23);
+  ctx.quadraticCurveTo(x + 23, y + 19, x + 27, y + 24);
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(255, 207, 169, 0.3)";
+  ctx.beginPath();
+  ctx.arc(x + 10, y + 10, 2.2, 0, Math.PI * 2);
+  ctx.arc(x + 23, y + 20, 1.8, 0, Math.PI * 2);
+  ctx.arc(x + 14, y + 25, 1.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(4, 24, 39, 0.18)";
+  ctx.fillRect(x + 5, y + TILE_SIZE - 5, TILE_SIZE - 10, 2);
 }
 
+function drawMazeWalls() {
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      if (maze[row][col] === TILE.WALL) {
+        drawWallTile(col * TILE_SIZE, row * TILE_SIZE);
+      }
+    }
+  }
+}
+
+function drawBoardFrame() {
+  ctx.save();
+  ctx.strokeStyle = "rgba(79, 227, 255, 0.55)";
+  ctx.lineWidth = 4;
+  ctx.shadowColor = "rgba(79, 227, 255, 0.75)";
+  ctx.shadowBlur = 12;
+  ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "rgba(255, 155, 135, 0.55)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(9, 9, canvas.width - 18, canvas.height - 18);
+  ctx.restore();
+}
+
+// drawChum() makes each collectible a tiny organic bit instead of a plain dot.
 function drawChum(x, y) {
+  const centerX = x + TILE_SIZE / 2;
+  const centerY = y + TILE_SIZE / 2;
+
+  ctx.save();
+  ctx.shadowColor = "rgba(255, 95, 109, 0.55)";
+  ctx.shadowBlur = 5;
+
   ctx.fillStyle = "#ff6f91";
   ctx.beginPath();
-  ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, 4, 0, Math.PI * 2);
+  ctx.ellipse(centerX - 2, centerY, 4, 3, -0.35, 0, Math.PI * 2);
   ctx.fill();
+
+  ctx.fillStyle = "#ff3f67";
+  ctx.beginPath();
+  ctx.ellipse(centerX + 3, centerY + 2, 3, 2.5, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(255, 220, 226, 0.78)";
+  ctx.beginPath();
+  ctx.arc(centerX - 3, centerY - 1, 1.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
+// drawFrenzyBait() gives the power item a stronger pulsing arcade glow.
 function drawFrenzyBait(x, y) {
   const centerX = x + TILE_SIZE / 2;
   const centerY = y + TILE_SIZE / 2;
-  const pulse = Math.sin(getGameTime() / 140) * 3;
+  const pulse = Math.sin(getGameTime() / 130);
+  const glowSize = 11 + pulse * 1.5;
+  const baitGradient = ctx.createRadialGradient(centerX - 2, centerY - 3, 2, centerX, centerY, 10);
 
-  ctx.shadowColor = "#ff4a22";
-  ctx.shadowBlur = 18 + pulse;
-  ctx.fillStyle = "#ffb000";
+  baitGradient.addColorStop(0, "#fff4a8");
+  baitGradient.addColorStop(0.42, "#ffb23b");
+  baitGradient.addColorStop(1, "#ff3b30");
+
+  ctx.save();
+  ctx.shadowColor = "rgba(255, 74, 34, 0.95)";
+  ctx.shadowBlur = 18 + pulse * 5;
+  ctx.strokeStyle = "rgba(255, 207, 92, 0.72)";
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(centerX, centerY, 9 + pulse * 0.2, 0, Math.PI * 2);
+  ctx.arc(centerX, centerY, glowSize, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = baitGradient;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 7, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "#ff3b30";
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, 5, 0, Math.PI * 2);
-  ctx.fill();
   ctx.shadowBlur = 0;
+  ctx.fillStyle = "rgba(255, 244, 168, 0.9)";
+  ctx.beginPath();
+  ctx.arc(centerX - 2, centerY - 3, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCollectibles() {
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const tile = maze[row][col];
+      const x = col * TILE_SIZE;
+      const y = row * TILE_SIZE;
+
+      if (tile === TILE.CHUM) {
+        drawChum(x, y);
+      }
+
+      if (tile === TILE.FRENZY_BAIT) {
+        drawFrenzyBait(x, y);
+      }
+    }
+  }
 }
 
 function drawPlayerShark() {
@@ -1296,195 +1438,192 @@ function drawEnemies() {
 }
 
 function drawMaze() {
-  for (let row = 0; row < ROWS; row += 1) {
-    for (let col = 0; col < COLS; col += 1) {
-      const tile = maze[row][col];
-      const x = col * TILE_SIZE;
-      const y = row * TILE_SIZE;
+  drawFloorTiles();
+  drawMazeWalls();
+  drawCollectibles();
+  drawBoardFrame();
+}
 
-      drawWaterTile(x, y);
+function drawOverlayBackdrop(accentColor, isTransparent) {
+  const backdropGradient = ctx.createRadialGradient(
+    canvas.width / 2,
+    canvas.height / 2,
+    40,
+    canvas.width / 2,
+    canvas.height / 2,
+    canvas.width / 1.2
+  );
 
-      if (tile === TILE.WALL) {
-        drawWallTile(x, y);
-      }
+  backdropGradient.addColorStop(0, isTransparent ? "rgba(8, 40, 61, 0.78)" : "#0b3650");
+  backdropGradient.addColorStop(0.56, isTransparent ? "rgba(4, 24, 39, 0.82)" : "#041827");
+  backdropGradient.addColorStop(1, isTransparent ? "rgba(3, 17, 31, 0.9)" : "#020b14");
 
-      if (tile === TILE.CHUM) {
-        drawChum(x, y);
-      }
+  ctx.fillStyle = backdropGradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      if (tile === TILE.FRENZY_BAIT) {
-        drawFrenzyBait(x, y);
-      }
-    }
-  }
+  ctx.save();
+  REEF_BUBBLES.forEach((bubble, index) => {
+    const drift = (getGameTime() / (26 + index * 4)) % 38;
+    const y = ((bubble.y - drift) + canvas.height) % canvas.height;
+
+    ctx.strokeStyle = accentColor;
+    ctx.globalAlpha = 0.13;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(bubble.x, y, bubble.size + index % 3, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function drawOverlayPanel(width, height) {
+  const x = (canvas.width - width) / 2;
+  const y = (canvas.height - height) / 2;
+  const panelGradient = ctx.createLinearGradient(x, y, x, y + height);
+
+  panelGradient.addColorStop(0, "rgba(9, 56, 76, 0.92)");
+  panelGradient.addColorStop(1, "rgba(3, 17, 31, 0.94)");
+
+  ctx.save();
+  ctx.shadowColor = "rgba(79, 227, 255, 0.42)";
+  ctx.shadowBlur = 22;
+  ctx.fillStyle = panelGradient;
+  drawRoundedRect(x, y, width, height, 12);
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "rgba(79, 227, 255, 0.82)";
+  ctx.lineWidth = 2;
+  drawRoundedRect(x + 4, y + 4, width - 8, height - 8, 10);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255, 155, 135, 0.58)";
+  ctx.lineWidth = 1;
+  drawRoundedRect(x + 10, y + 10, width - 20, height - 20, 8);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// drawOverlay() is shared by start, pause, level clear, game over, and win screens.
+function drawOverlay(options) {
+  const centerX = canvas.width / 2;
+  const panelWidth = options.panelWidth || 492;
+  const panelHeight = options.panelHeight || 332;
+  const panelTop = (canvas.height - panelHeight) / 2;
+
+  drawOverlayBackdrop(options.accentColor, options.transparent);
+  drawOverlayPanel(panelWidth, panelHeight);
+
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.fillStyle = options.titleColor;
+  ctx.font = options.titleFont || "bold 56px Trebuchet MS, Lucida Console, monospace";
+  ctx.shadowColor = options.glowColor;
+  ctx.shadowBlur = 16;
+  ctx.fillText(options.title, centerX, panelTop + 70);
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = options.subtitleColor || "#ffd4c7";
+  ctx.font = options.subtitleFont || "bold 22px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText(options.subtitle, centerX, panelTop + 128);
+
+  ctx.fillStyle = "#d9fbff";
+  ctx.font = "20px Trebuchet MS, Lucida Console, monospace";
+  options.lines.forEach((line, index) => {
+    ctx.fillText(line, centerX, panelTop + 184 + index * 36);
+  });
+
+  ctx.fillStyle = "#ffcf5c";
+  ctx.font = "bold 21px Trebuchet MS, Lucida Console, monospace";
+  ctx.shadowColor = "rgba(255, 207, 92, 0.6)";
+  ctx.shadowBlur = 10;
+  ctx.fillText(options.action, centerX, panelTop + panelHeight - 42);
+  ctx.restore();
 }
 
 function drawStartScreen() {
-  const centerX = canvas.width / 2;
-
-  ctx.fillStyle = "#041827";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = "rgba(79, 227, 255, 0.08)";
-  for (let i = 0; i < 18; i += 1) {
-    ctx.beginPath();
-    ctx.arc((i * 67) % canvas.width, 60 + ((i * 41) % 340), 18, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  ctx.fillStyle = "#4fe3ff";
-  ctx.font = "bold 64px Trebuchet MS, Lucida Console, monospace";
-  ctx.shadowColor = "rgba(79, 227, 255, 0.9)";
-  ctx.shadowBlur = 16;
-  ctx.fillText("CHOMP", centerX, 142);
-
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "#ffb7bf";
-  ctx.font = "24px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText("A Shark Maze Arcade Game", centerX, 206);
-
-  ctx.fillStyle = "#d9fbff";
-  ctx.font = "20px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText("Collect the chum. Avoid the reef defenders.", centerX, 278);
-
-  ctx.fillStyle = "#d9fbff";
-  ctx.font = "bold 20px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText(`High Score: ${highScore}`, centerX, 318);
-
-  ctx.fillStyle = "#ffcf5c";
-  ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText("Press Space or Tap to Start", centerX, 372);
+  drawOverlay({
+    title: "CHOMP",
+    subtitle: "A Shark Maze Arcade Game",
+    lines: [
+      "Collect chum. Avoid reef defenders.",
+      `High Score: ${highScore}`,
+    ],
+    action: "Press Space or Tap to Start",
+    titleColor: "#4fe3ff",
+    glowColor: "rgba(79, 227, 255, 0.9)",
+    accentColor: "rgba(79, 227, 255, 0.9)",
+    titleFont: "bold 64px Trebuchet MS, Lucida Console, monospace",
+  });
 }
 
 function drawGameOverScreen() {
-  const centerX = canvas.width / 2;
-
-  ctx.fillStyle = "#041827";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = "rgba(255, 95, 109, 0.1)";
-  for (let i = 0; i < 16; i += 1) {
-    ctx.beginPath();
-    ctx.arc((i * 83) % canvas.width, 70 + ((i * 47) % 330), 20, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  ctx.fillStyle = "#ff5f6d";
-  ctx.font = "bold 58px Trebuchet MS, Lucida Console, monospace";
-  ctx.shadowColor = "rgba(255, 95, 109, 0.9)";
-  ctx.shadowBlur = 14;
-  ctx.fillText("GAME OVER", centerX, 154);
-
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "#d9fbff";
-  ctx.font = "bold 24px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText(`Final Score: ${score}`, centerX, 232);
-
-  ctx.fillStyle = "#d9fbff";
-  ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText(`High Score: ${highScore}`, centerX, 272);
-
-  ctx.fillStyle = "#ffcf5c";
-  ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText("Press Space or Tap to Restart", centerX, 336);
+  drawOverlay({
+    title: "GAME OVER",
+    subtitle: `Final Score: ${score}`,
+    lines: [
+      `High Score: ${highScore}`,
+    ],
+    action: "Press Space or Tap to Restart",
+    titleColor: "#ff5f6d",
+    glowColor: "rgba(255, 95, 109, 0.9)",
+    accentColor: "rgba(255, 95, 109, 0.9)",
+    subtitleColor: "#d9fbff",
+    titleFont: "bold 56px Trebuchet MS, Lucida Console, monospace",
+  });
 }
 
 function drawLevelClearScreen() {
-  const centerX = canvas.width / 2;
-
-  ctx.fillStyle = "#041827";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = "rgba(79, 227, 255, 0.1)";
-  for (let i = 0; i < 18; i += 1) {
-    ctx.beginPath();
-    ctx.arc((i * 71) % canvas.width, 55 + ((i * 53) % 360), 18, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  ctx.fillStyle = "#4fe3ff";
-  ctx.font = "bold 56px Trebuchet MS, Lucida Console, monospace";
-  ctx.shadowColor = "rgba(79, 227, 255, 0.9)";
-  ctx.shadowBlur = 14;
-  ctx.fillText("LEVEL CLEAR!", centerX, 150);
-
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "#d9fbff";
-  ctx.font = "bold 24px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText(`Level ${currentLevel} Complete`, centerX, 226);
-
-  ctx.fillStyle = "#ffcf5c";
-  ctx.font = "20px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText(`Bonus: ${LEVEL_CLEAR_BONUS * currentLevel}`, centerX, 274);
-
-  ctx.fillStyle = "#ffb7bf";
-  ctx.font = "bold 20px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText("Next level loading...", centerX, 340);
+  drawOverlay({
+    title: "LEVEL CLEAR!",
+    subtitle: `Level ${currentLevel} Complete`,
+    lines: [
+      `Bonus: ${LEVEL_CLEAR_BONUS * currentLevel}`,
+      "Next level loading...",
+    ],
+    action: "Stay sharp",
+    titleColor: "#4fe3ff",
+    glowColor: "rgba(79, 227, 255, 0.9)",
+    accentColor: "rgba(79, 227, 255, 0.9)",
+    subtitleColor: "#d9fbff",
+  });
 }
 
 function drawWinScreen() {
-  const centerX = canvas.width / 2;
-
-  ctx.fillStyle = "#041827";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = "rgba(255, 207, 92, 0.12)";
-  for (let i = 0; i < 20; i += 1) {
-    ctx.beginPath();
-    ctx.arc((i * 59) % canvas.width, 50 + ((i * 67) % 380), 20, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  ctx.fillStyle = "#ffcf5c";
-  ctx.font = "bold 64px Trebuchet MS, Lucida Console, monospace";
-  ctx.shadowColor = "rgba(255, 207, 92, 0.9)";
-  ctx.shadowBlur = 16;
-  ctx.fillText("YOU WIN!", centerX, 140);
-
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "#d9fbff";
-  ctx.font = "bold 24px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText(`Final Score: ${score}`, centerX, 226);
-  ctx.fillText(`Levels Cleared: ${TOTAL_LEVELS}`, centerX, 266);
-
-  ctx.fillStyle = "#d9fbff";
-  ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText(`High Score: ${highScore}`, centerX, 306);
-
-  ctx.fillStyle = "#ffb7bf";
-  ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText("Press Space or Tap to Restart", centerX, 362);
+  drawOverlay({
+    title: "YOU WIN!",
+    subtitle: `Final Score: ${score}`,
+    lines: [
+      `Levels Cleared: ${TOTAL_LEVELS}`,
+      `High Score: ${highScore}`,
+    ],
+    action: "Press Space or Tap to Restart",
+    titleColor: "#ffcf5c",
+    glowColor: "rgba(255, 207, 92, 0.9)",
+    accentColor: "rgba(255, 207, 92, 0.9)",
+    subtitleColor: "#d9fbff",
+    titleFont: "bold 64px Trebuchet MS, Lucida Console, monospace",
+  });
 }
 
 function drawPauseOverlay() {
-  ctx.fillStyle = "rgba(4, 24, 39, 0.72)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  ctx.fillStyle = "#4fe3ff";
-  ctx.font = "bold 58px Trebuchet MS, Lucida Console, monospace";
-  ctx.shadowColor = "rgba(79, 227, 255, 0.9)";
-  ctx.shadowBlur = 14;
-  ctx.fillText("PAUSED", canvas.width / 2, canvas.height / 2 - 18);
-
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "#d9fbff";
-  ctx.font = "20px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText("Press P or tap Resume", canvas.width / 2, canvas.height / 2 + 42);
+  drawOverlay({
+    title: "PAUSED",
+    subtitle: "Reef current held",
+    lines: [
+      "Press P or tap Resume",
+    ],
+    action: "Ready when you are",
+    titleColor: "#4fe3ff",
+    glowColor: "rgba(79, 227, 255, 0.9)",
+    accentColor: "rgba(79, 227, 255, 0.9)",
+    transparent: true,
+    panelWidth: 430,
+    panelHeight: 260,
+    titleFont: "bold 54px Trebuchet MS, Lucida Console, monospace",
+  });
 }
 
 function clearCanvas() {

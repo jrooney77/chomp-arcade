@@ -1,11 +1,14 @@
 :root {
   color-scheme: dark;
-  --deep-ocean: #041827;
+  --deep-ocean: #03111f;
   --ocean: #08283d;
+  --reef-blue: #0f5d69;
+  --reef-stone: #2f6f6f;
   --foam: #d9fbff;
   --aqua: #4fe3ff;
   --coral: #ff5f6d;
-  --reef: #8b5a3c;
+  --soft-coral: #ff9b87;
+  --gold: #ffcf5c;
 }
 
 * {
@@ -20,16 +23,33 @@ body {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  isolation: isolate;
   padding: clamp(8px, 2vw, 24px);
   color: var(--foam);
   font-family: "Trebuchet MS", "Lucida Console", monospace;
   background:
-    radial-gradient(circle at 20% 15%, rgba(79, 227, 255, 0.14), transparent 28%),
-    radial-gradient(circle at 80% 80%, rgba(255, 95, 109, 0.1), transparent 30%),
-    linear-gradient(180deg, var(--ocean), var(--deep-ocean));
+    radial-gradient(circle at 50% 44%, rgba(79, 227, 255, 0.17), transparent 34%),
+    radial-gradient(circle at 18% 16%, rgba(43, 214, 187, 0.14), transparent 25%),
+    radial-gradient(circle at 82% 78%, rgba(255, 95, 109, 0.12), transparent 30%),
+    linear-gradient(180deg, #0b3650 0%, var(--ocean) 35%, var(--deep-ocean) 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 72%, rgba(217, 251, 255, 0.08) 0 2px, transparent 3px),
+    radial-gradient(circle at 72% 22%, rgba(217, 251, 255, 0.07) 0 1px, transparent 3px),
+    radial-gradient(circle at 88% 58%, rgba(79, 227, 255, 0.08) 0 2px, transparent 4px);
+  opacity: 0.8;
 }
 
 .game-shell {
+  position: relative;
+  z-index: 1;
   width: min(100%, 1120px);
   max-height: 100%;
   display: flex;
@@ -41,6 +61,7 @@ body {
 .game-header {
   flex: 0 0 auto;
   margin-bottom: clamp(8px, 1.6vh, 16px);
+  text-transform: uppercase;
 }
 
 .game-header h1 {
@@ -50,16 +71,20 @@ body {
   line-height: 1;
   letter-spacing: 0;
   text-shadow:
-    0 0 8px rgba(79, 227, 255, 0.8),
-    3px 3px 0 rgba(0, 0, 0, 0.55);
+    0 0 6px rgba(217, 251, 255, 0.85),
+    0 0 18px rgba(79, 227, 255, 0.72),
+    0 0 34px rgba(43, 214, 187, 0.4),
+    3px 3px 0 rgba(0, 0, 0, 0.62);
 }
 
 .game-header p {
   margin: 8px 0 0;
-  color: #ffb7bf;
+  color: #ffd4c7;
   font-size: clamp(1rem, 3vw, 1.3rem);
+  text-shadow: 0 0 10px rgba(255, 155, 135, 0.55);
 }
 
+/* HUD / Top UI: compact arcade readouts that stay readable on mobile. */
 .game-hud {
   display: flex;
   flex: 0 0 auto;
@@ -72,11 +97,17 @@ body {
 
 .hud-item {
   min-width: 136px;
-  padding: 8px 12px;
+  padding: 9px 12px;
   color: var(--foam);
   text-align: left;
-  background: rgba(4, 24, 39, 0.86);
-  border: 2px solid rgba(79, 227, 255, 0.82);
+  background:
+    linear-gradient(180deg, rgba(15, 93, 105, 0.44), rgba(4, 24, 39, 0.9)),
+    rgba(4, 24, 39, 0.86);
+  border: 1px solid rgba(79, 227, 255, 0.9);
+  border-radius: 6px;
+  box-shadow:
+    inset 0 0 0 1px rgba(217, 251, 255, 0.08),
+    0 0 14px rgba(79, 227, 255, 0.18);
 }
 
 .hud-item.is-hidden {
@@ -86,9 +117,10 @@ body {
 .hud-label {
   display: block;
   margin-bottom: 2px;
-  color: #ffb7bf;
+  color: #ffd4c7;
   font-size: 0.78rem;
   text-transform: uppercase;
+  text-shadow: 0 0 8px rgba(255, 155, 135, 0.45);
 }
 
 #scoreValue,
@@ -107,12 +139,18 @@ body {
   flex: 0 0 auto;
   min-width: 120px;
   margin: 0 auto clamp(8px, 1.5vh, 12px);
-  padding: 8px 16px;
-  color: var(--deep-ocean);
+  padding: 9px 18px;
+  color: var(--foam);
   font: 700 1rem "Trebuchet MS", "Lucida Console", monospace;
-  background: var(--aqua);
-  border: 2px solid var(--foam);
+  background:
+    linear-gradient(180deg, rgba(79, 227, 255, 0.42), rgba(15, 93, 105, 0.9));
+  border: 1px solid rgba(217, 251, 255, 0.84);
+  border-radius: 6px;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 0 16px rgba(79, 227, 255, 0.32);
   cursor: pointer;
+  text-shadow: 0 0 8px rgba(217, 251, 255, 0.65);
 }
 
 .pause-button:disabled {
@@ -124,9 +162,12 @@ body {
 
 .pause-button:not(:disabled):hover,
 .pause-button:not(:disabled):focus-visible {
-  background: #ffcf5c;
+  color: #03111f;
+  background:
+    linear-gradient(180deg, var(--gold), var(--soft-coral));
   outline: 2px solid var(--foam);
   outline-offset: 2px;
+  text-shadow: none;
 }
 
 #frenzyValue {
@@ -148,11 +189,14 @@ body {
   touch-action: none;
   image-rendering: pixelated;
   background: #03111f;
-  border: 4px solid var(--coral);
+  border: 4px solid rgba(79, 227, 255, 0.92);
+  border-radius: 8px;
   box-shadow:
-    0 0 0 4px rgba(79, 227, 255, 0.32),
+    0 0 0 2px rgba(255, 155, 135, 0.64),
+    0 0 0 7px rgba(3, 17, 31, 0.78),
     0 0 24px rgba(79, 227, 255, 0.45),
-    0 0 48px rgba(255, 95, 109, 0.2);
+    0 0 54px rgba(43, 214, 187, 0.2),
+    0 0 72px rgba(255, 95, 109, 0.18);
 }
 
 @media (max-width: 520px) {
