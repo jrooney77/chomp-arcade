@@ -19,6 +19,10 @@
         <span id="scoreValue">0</span>
       </div>
       <div class="hud-item">
+        <span class="hud-label">High Score</span>
+        <span id="highScoreValue">0</span>
+      </div>
+      <div class="hud-item">
         <span class="hud-label">Chum Left</span>
         <span id="chumValue">0</span>
       </div>
@@ -39,6 +43,16 @@
         <span id="debugValue">ON</span>
       </div>
     </section>
+
+    <button
+      class="pause-button"
+      id="pauseButton"
+      type="button"
+      aria-pressed="false"
+      disabled
+    >
+      Pause
+    </button>
 
     <canvas
       id="gameCanvas"

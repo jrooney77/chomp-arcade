@@ -92,6 +92,7 @@ body {
 }
 
 #scoreValue,
+#highScoreValue,
 #chumValue,
 #livesValue,
 #levelValue,
@@ -100,6 +101,32 @@ body {
   display: block;
   font-size: 1.2rem;
   font-weight: 700;
+}
+
+.pause-button {
+  flex: 0 0 auto;
+  min-width: 120px;
+  margin: 0 auto clamp(8px, 1.5vh, 12px);
+  padding: 8px 16px;
+  color: var(--deep-ocean);
+  font: 700 1rem "Trebuchet MS", "Lucida Console", monospace;
+  background: var(--aqua);
+  border: 2px solid var(--foam);
+  cursor: pointer;
+}
+
+.pause-button:disabled {
+  color: rgba(217, 251, 255, 0.55);
+  background: rgba(4, 24, 39, 0.8);
+  border-color: rgba(217, 251, 255, 0.35);
+  cursor: not-allowed;
+}
+
+.pause-button:not(:disabled):hover,
+.pause-button:not(:disabled):focus-visible {
+  background: #ffcf5c;
+  outline: 2px solid var(--foam);
+  outline-offset: 2px;
 }
 
 #frenzyValue {
@@ -161,6 +188,7 @@ body {
   }
 
   #scoreValue,
+  #highScoreValue,
   #chumValue,
   #livesValue,
   #levelValue,
@@ -169,8 +197,13 @@ body {
     font-size: 1rem;
   }
 
+  .pause-button {
+    width: min(100%, 180px);
+    padding: 7px 14px;
+  }
+
   #gameCanvas {
-    max-height: calc(100dvh - 150px);
+    max-height: calc(100dvh - 190px);
     border-width: 3px;
   }
 }
@@ -188,7 +221,11 @@ body {
     padding: 5px 8px;
   }
 
+  .pause-button {
+    padding: 5px 12px;
+  }
+
   #gameCanvas {
-    max-height: calc(100dvh - 115px);
+    max-height: calc(100dvh - 145px);
   }
 }

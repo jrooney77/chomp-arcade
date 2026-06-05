@@ -4,6 +4,7 @@
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const scoreValueElement = document.getElementById("scoreValue");
+const highScoreValueElement = document.getElementById("highScoreValue");
 const chumValueElement = document.getElementById("chumValue");
 const livesValueElement = document.getElementById("livesValue");
 const levelValueElement = document.getElementById("levelValue");
@@ -12,6 +13,7 @@ const frenzyValueElement = document.getElementById("frenzyValue");
 const debugHudElement = document.getElementById("debugHud");
 const gameHeaderElement = document.querySelector(".game-header");
 const gameHudElement = document.querySelector(".game-hud");
+const pauseButtonElement = document.getElementById("pauseButton");
 
 // A tile size of 32 gives us a clear retro maze grid.
 const TILE_SIZE = 32;
@@ -27,8 +29,12 @@ function resizeCanvasDisplay() {
   const verticalPadding = window.innerWidth <= 520 ? 20 : 56;
   const headerHeight = gameHeaderElement.offsetHeight;
   const hudHeight = gameHudElement.offsetHeight;
+  const pauseButtonHeight = pauseButtonElement.offsetHeight;
   const availableWidth = Math.max(280, Math.min(1120, window.innerWidth - sidePadding));
-  const availableHeight = Math.max(240, viewportHeight - headerHeight - hudHeight - verticalPadding);
+  const availableHeight = Math.max(
+    240,
+    viewportHeight - headerHeight - hudHeight - pauseButtonHeight - verticalPadding
+  );
   const scale = Math.min(availableWidth / canvas.width, availableHeight / canvas.height);
 
   // The canvas drawing and collision logic stay in internal canvas coordinates.
@@ -71,6 +77,7 @@ const ENEMY_RETURN_MS = 1000;
 const TOTAL_LEVELS = 3;
 const LEVEL_CLEAR_BONUS = 500;
 const LEVEL_CLEAR_DELAY_MS = 1200;
+const HIGH_SCORE_STORAGE_KEY = "chompHighScore";
 
 const ENEMY_SPEEDS = {
   dolphinPatrol: 1,
@@ -182,11 +189,16 @@ let currentLevel = 1;
 let currentLayout = LEVELS[0];
 let maze = cloneMaze(currentLayout.maze);
 let score = 0;
+let highScore = loadHighScore();
 let lives = STARTING_LIVES;
 let remainingChum = countRemainingChum();
 let debugMode = false;
 let levelClearReady = false;
 let levelClearTimeoutId = null;
+let isPaused = false;
+let totalPausedTime = 0;
+let pauseStartedRealTime = 0;
+let pauseStartedGameTime = 0;
 let frenzyMode = {
   active: false,
   endTime: 0,
@@ -236,6 +248,75 @@ function startGame() {
   }
 }
 
+function loadHighScore() {
+  try {
+    const savedHighScore = window.localStorage.getItem(HIGH_SCORE_STORAGE_KEY);
+    const parsedHighScore = Number.parseInt(savedHighScore, 10);
+
+    return Number.isFinite(parsedHighScore) && parsedHighScore > 0 ? parsedHighScore : 0;
+  } catch (error) {
+    // Some browser settings block localStorage. The game still works with the
+    // highScore variable in memory for the current page load.
+    return 0;
+  }
+}
+
+function saveHighScore() {
+  try {
+    window.localStorage.setItem(HIGH_SCORE_STORAGE_KEY, String(highScore));
+  } catch (error) {
+    // If saving is blocked, keep playing with the in-memory high score.
+  }
+}
+
+function updateHighScore() {
+  if (score <= highScore) {
+    return;
+  }
+
+  highScore = score;
+  saveHighScore();
+}
+
+// Game timers use this clock instead of raw performance.now(). While paused,
+// the clock returns the same value every frame so Frenzy Mode, enemy return
+// delays, and simple canvas animations do not keep counting down.
+function getGameTime() {
+  if (isPaused) {
+    return pauseStartedGameTime;
+  }
+
+  return performance.now() - totalPausedTime;
+}
+
+function updatePauseButton() {
+  pauseButtonElement.disabled = gameState !== GAME_STATE.PLAYING;
+  pauseButtonElement.textContent = isPaused ? "Resume" : "Pause";
+  pauseButtonElement.setAttribute("aria-pressed", String(isPaused));
+}
+
+function togglePause() {
+  if (gameState !== GAME_STATE.PLAYING) {
+    return;
+  }
+
+  if (isPaused) {
+    totalPausedTime += performance.now() - pauseStartedRealTime;
+    pauseStartedRealTime = 0;
+    pauseStartedGameTime = 0;
+    isPaused = false;
+  } else {
+    const now = performance.now();
+
+    pauseStartedRealTime = now;
+    pauseStartedGameTime = now - totalPausedTime;
+    isPaused = true;
+  }
+
+  updateFrenzyDisplay();
+  updatePauseButton();
+}
+
 function cloneMaze(sourceMaze) {
   return sourceMaze.map((row) => row.slice());
 }
@@ -256,11 +337,13 @@ function countRemainingChum() {
 
 function updateScore(points) {
   score += points;
+  updateHighScore();
   updateScoreDisplay();
 }
 
 function updateScoreDisplay() {
   scoreValueElement.textContent = score;
+  highScoreValueElement.textContent = highScore;
   chumValueElement.textContent = remainingChum;
   livesValueElement.textContent = lives;
   levelValueElement.textContent = currentLevel;
@@ -277,6 +360,7 @@ function updateDebugDisplay() {
 function updateStatusDisplay() {
   updateScoreDisplay();
   updateDebugDisplay();
+  updatePauseButton();
 }
 
 // Debug mode is intentionally simple and local-test friendly. It hides enemies,
@@ -289,7 +373,7 @@ function toggleDebugMode() {
 }
 
 function debugClearCurrentLevel() {
-  if (!debugMode || gameState !== GAME_STATE.PLAYING) {
+  if (!debugMode || gameState !== GAME_STATE.PLAYING || isPaused) {
     return;
   }
 
@@ -305,7 +389,7 @@ function updateFrenzyDisplay() {
     return;
   }
 
-  const secondsLeft = Math.max(0, (frenzyMode.endTime - performance.now()) / 1000);
+  const secondsLeft = Math.max(0, (frenzyMode.endTime - getGameTime()) / 1000);
   frenzyHudElement.classList.remove("is-hidden");
   frenzyValueElement.textContent = `${secondsLeft.toFixed(1)}s`;
 }
@@ -316,7 +400,7 @@ function startFrenzyMode() {
   }
 
   frenzyMode.active = true;
-  frenzyMode.endTime = performance.now() + getFrenzyDuration();
+  frenzyMode.endTime = getGameTime() + getFrenzyDuration();
   frenzyMode.chompCount = 0;
 
   enemies.forEach((enemy) => {
@@ -352,7 +436,7 @@ function updateFrenzyMode() {
     return;
   }
 
-  if (performance.now() >= frenzyMode.endTime) {
+  if (getGameTime() >= frenzyMode.endTime) {
     endFrenzyMode();
     return;
   }
@@ -405,13 +489,19 @@ function resetGame() {
   currentLevel = 1;
   score = 0;
   lives = STARTING_LIVES;
+  debugMode = false;
+  isPaused = false;
+  totalPausedTime = 0;
+  pauseStartedRealTime = 0;
+  pauseStartedGameTime = 0;
   levelClearReady = false;
   loadLevel(currentLevel);
   gameState = GAME_STATE.PLAYING;
+  updateStatusDisplay();
 }
 
 function setPlayerNextDirection(direction) {
-  if (gameState !== GAME_STATE.PLAYING || !DIRECTIONS[direction]) {
+  if (gameState !== GAME_STATE.PLAYING || isPaused || !DIRECTIONS[direction]) {
     return;
   }
 
@@ -735,7 +825,7 @@ function updateEnemies() {
 
   enemies.forEach((enemy) => {
     if (enemy.state === "returning") {
-      if (performance.now() >= enemy.returnUntil) {
+      if (getGameTime() >= enemy.returnUntil) {
         enemy.state = frenzyMode.active ? "vulnerable" : "normal";
         enemy.isVulnerable = frenzyMode.active;
       }
@@ -800,8 +890,9 @@ function loseLife() {
 
   if (lives <= 0) {
     lives = 0;
-    updateScoreDisplay();
+    updateStatusDisplay();
     gameState = GAME_STATE.GAME_OVER;
+    updatePauseButton();
     return;
   }
 }
@@ -838,7 +929,7 @@ function sendEnemyToSpawn(enemy) {
   enemy.direction = enemy.startDirection;
   enemy.state = "returning";
   enemy.isVulnerable = false;
-  enemy.returnUntil = performance.now() + ENEMY_RETURN_MS;
+  enemy.returnUntil = getGameTime() + ENEMY_RETURN_MS;
 }
 
 function handleEnemyCollision(enemy) {
@@ -896,7 +987,7 @@ function drawChum(x, y) {
 function drawFrenzyBait(x, y) {
   const centerX = x + TILE_SIZE / 2;
   const centerY = y + TILE_SIZE / 2;
-  const pulse = Math.sin(performance.now() / 140) * 3;
+  const pulse = Math.sin(getGameTime() / 140) * 3;
 
   ctx.shadowColor = "#ff4a22";
   ctx.shadowBlur = 18 + pulse;
@@ -916,7 +1007,7 @@ function drawPlayerShark() {
   const facing = player.direction || player.nextDirection || "right";
   const direction = DIRECTIONS[facing];
   const isFrenzy = frenzyMode.active && gameState === GAME_STATE.PLAYING;
-  const pulse = isFrenzy ? Math.sin(performance.now() / 110) * 4 : 0;
+  const pulse = isFrenzy ? Math.sin(getGameTime() / 110) * 4 : 0;
 
   ctx.save();
   ctx.translate(player.x, player.y);
@@ -1061,7 +1152,7 @@ function drawElectricEel(enemy) {
   const direction = DIRECTIONS[enemy.direction || enemy.startDirection];
   const isVulnerable = enemy.state === "vulnerable";
   const isReturning = enemy.state === "returning";
-  const pulse = Math.sin(performance.now() / 90);
+  const pulse = Math.sin(getGameTime() / 90);
   const bodyColor = isVulnerable ? "#8fa09b" : "#b9f15a";
   const stripeColor = isVulnerable ? "#d7dfd5" : "#f7ff6a";
 
@@ -1123,7 +1214,7 @@ function drawDiverDrone(enemy) {
   const isReturning = enemy.state === "returning";
   const bodyColor = isVulnerable ? "#9a978e" : "#ffb13b";
   const trimColor = isVulnerable ? "#d5d0c6" : "#ffdf75";
-  const spin = performance.now() / 90;
+  const spin = getGameTime() / 90;
 
   ctx.save();
   ctx.translate(enemy.x, enemy.y);
@@ -1259,9 +1350,13 @@ function drawStartScreen() {
   ctx.font = "20px Trebuchet MS, Lucida Console, monospace";
   ctx.fillText("Collect the chum. Avoid the reef defenders.", centerX, 278);
 
+  ctx.fillStyle = "#d9fbff";
+  ctx.font = "bold 20px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText(`High Score: ${highScore}`, centerX, 318);
+
   ctx.fillStyle = "#ffcf5c";
   ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText("Press Space or Tap to Start", centerX, 348);
+  ctx.fillText("Press Space or Tap to Start", centerX, 372);
 }
 
 function drawGameOverScreen() {
@@ -1291,9 +1386,13 @@ function drawGameOverScreen() {
   ctx.font = "bold 24px Trebuchet MS, Lucida Console, monospace";
   ctx.fillText(`Final Score: ${score}`, centerX, 232);
 
+  ctx.fillStyle = "#d9fbff";
+  ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText(`High Score: ${highScore}`, centerX, 272);
+
   ctx.fillStyle = "#ffcf5c";
   ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText("Press Space or Tap to Restart", centerX, 320);
+  ctx.fillText("Press Space or Tap to Restart", centerX, 336);
 }
 
 function drawLevelClearScreen() {
@@ -1360,9 +1459,32 @@ function drawWinScreen() {
   ctx.fillText(`Final Score: ${score}`, centerX, 226);
   ctx.fillText(`Levels Cleared: ${TOTAL_LEVELS}`, centerX, 266);
 
+  ctx.fillStyle = "#d9fbff";
+  ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText(`High Score: ${highScore}`, centerX, 306);
+
   ctx.fillStyle = "#ffb7bf";
   ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
-  ctx.fillText("Press Space or Tap to Restart", centerX, 342);
+  ctx.fillText("Press Space or Tap to Restart", centerX, 362);
+}
+
+function drawPauseOverlay() {
+  ctx.fillStyle = "rgba(4, 24, 39, 0.72)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.fillStyle = "#4fe3ff";
+  ctx.font = "bold 58px Trebuchet MS, Lucida Console, monospace";
+  ctx.shadowColor = "rgba(79, 227, 255, 0.9)";
+  ctx.shadowBlur = 14;
+  ctx.fillText("PAUSED", canvas.width / 2, canvas.height / 2 - 18);
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#d9fbff";
+  ctx.font = "20px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText("Press P or tap Resume", canvas.width / 2, canvas.height / 2 + 42);
 }
 
 function clearCanvas() {
@@ -1376,7 +1498,7 @@ function gameLoop() {
     drawStartScreen();
   }
 
-  if (gameState === GAME_STATE.PLAYING) {
+  if (gameState === GAME_STATE.PLAYING && !isPaused) {
     updateFrenzyMode();
     movePlayer();
     updateEnemies();
@@ -1387,6 +1509,10 @@ function gameLoop() {
     drawMaze();
     drawPlayerShark();
     drawEnemies();
+
+    if (isPaused) {
+      drawPauseOverlay();
+    }
   }
 
   if (gameState === GAME_STATE.GAME_OVER) {
@@ -1419,6 +1545,12 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (event.code === "KeyP") {
+    event.preventDefault();
+    togglePause();
+    return;
+  }
+
   if (direction) {
     event.preventDefault();
     setPlayerNextDirection(direction);
@@ -1432,6 +1564,7 @@ window.addEventListener("keydown", (event) => {
 });
 
 canvas.addEventListener("click", startGame);
+pauseButtonElement.addEventListener("click", togglePause);
 
 let touchStartX = 0;
 let touchStartY = 0;
@@ -1481,7 +1614,7 @@ canvas.addEventListener("touchcancel", () => {
 window.addEventListener("resize", resizeCanvasDisplay);
 window.addEventListener("orientationchange", resizeCanvasDisplay);
 
-updateScoreDisplay();
+updateStatusDisplay();
 updateFrenzyDisplay();
 resizeCanvasDisplay();
 gameLoop();
