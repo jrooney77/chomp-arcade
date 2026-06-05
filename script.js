@@ -13,7 +13,9 @@ const frenzyValueElement = document.getElementById("frenzyValue");
 const debugHudElement = document.getElementById("debugHud");
 const gameHeaderElement = document.querySelector(".game-header");
 const gameHudElement = document.querySelector(".game-hud");
+const gameControlsElement = document.querySelector(".game-controls");
 const pauseButtonElement = document.getElementById("pauseButton");
+const soundButtonElement = document.getElementById("soundButton");
 
 // A tile size of 32 gives us a clear retro maze grid.
 const TILE_SIZE = 32;
@@ -29,11 +31,11 @@ function resizeCanvasDisplay() {
   const verticalPadding = window.innerWidth <= 520 ? 20 : 56;
   const headerHeight = gameHeaderElement.offsetHeight;
   const hudHeight = gameHudElement.offsetHeight;
-  const pauseButtonHeight = pauseButtonElement.offsetHeight;
+  const controlsHeight = gameControlsElement.offsetHeight;
   const availableWidth = Math.max(280, Math.min(1120, window.innerWidth - sidePadding));
   const availableHeight = Math.max(
     240,
-    viewportHeight - headerHeight - hudHeight - pauseButtonHeight - verticalPadding
+    viewportHeight - headerHeight - hudHeight - controlsHeight - verticalPadding
   );
   const scale = Math.min(availableWidth / canvas.width, availableHeight / canvas.height);
 
@@ -77,6 +79,8 @@ const ENEMY_RETURN_MS = 1000;
 const TOTAL_LEVELS = 3;
 const LEVEL_CLEAR_BONUS = 500;
 const HIGH_SCORE_STORAGE_KEY = "chompHighScore";
+const SOUND_MUTED_STORAGE_KEY = "chompSoundMuted";
+const MASTER_VOLUME = 0.18;
 const MAX_PARTICLES = 120;
 const SHARK_BUBBLE_INTERVAL_MS = 95;
 const SHARK_CHOMP_BOOST_MS = 280;
@@ -273,18 +277,23 @@ let enemies = enemyStarts.map((enemyStart) => (
 ));
 
 function startGame() {
+  initAudio();
+
   if (gameState === GAME_STATE.START) {
+    playSound("select");
     gameState = GAME_STATE.PLAYING;
     updateStatusDisplay();
     return;
   }
 
   if (gameState === GAME_STATE.LEVEL_CLEAR && levelClearReady) {
+    playSound("select");
     advanceToNextLevel();
     return;
   }
 
   if (gameState === GAME_STATE.GAME_OVER || gameState === GAME_STATE.WIN) {
+    playSound("select");
     resetGame();
   }
 }
@@ -319,6 +328,185 @@ function updateHighScore() {
   saveHighScore();
 }
 
+function loadSoundMuted() {
+  try {
+    return window.localStorage.getItem(SOUND_MUTED_STORAGE_KEY) === "true";
+  } catch (error) {
+    // If localStorage is blocked, sound still works with this page-load value.
+    return false;
+  }
+}
+
+let isSoundMuted = loadSoundMuted();
+let audioContext = null;
+let masterGain = null;
+let audioUnlocked = false;
+
+function saveSoundMuted() {
+  try {
+    window.localStorage.setItem(SOUND_MUTED_STORAGE_KEY, String(isSoundMuted));
+  } catch (error) {
+    // Muting still works in memory if saving is blocked.
+  }
+}
+
+function updateSoundButton() {
+  soundButtonElement.textContent = isSoundMuted ? "Sound: Off" : "Sound: On";
+  soundButtonElement.setAttribute("aria-pressed", String(!isSoundMuted));
+}
+
+// Browsers, especially iPhone Safari, block audio until a user gesture happens.
+// initAudio() is called from Space, tap, click, and button handlers so sound
+// unlocks only after the player chooses to interact with the game.
+function initAudio() {
+  if (audioUnlocked) {
+    return true;
+  }
+
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+    if (!AudioContextClass) {
+      return false;
+    }
+
+    audioContext = audioContext || new AudioContextClass();
+    masterGain = masterGain || audioContext.createGain();
+    masterGain.gain.value = isSoundMuted ? 0 : MASTER_VOLUME;
+    masterGain.connect(audioContext.destination);
+
+    if (audioContext.state === "suspended") {
+      audioContext.resume().catch(() => {});
+    }
+
+    audioUnlocked = true;
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function setMuted(isMuted) {
+  isSoundMuted = isMuted;
+  saveSoundMuted();
+  updateSoundButton();
+
+  if (masterGain) {
+    masterGain.gain.value = isSoundMuted ? 0 : MASTER_VOLUME;
+  }
+}
+
+function toggleMute() {
+  initAudio();
+  setMuted(!isSoundMuted);
+
+  if (!isSoundMuted) {
+    playSound("select");
+  }
+}
+
+function playTone(frequency, duration, options = {}) {
+  if (!audioContext || !masterGain) {
+    return;
+  }
+
+  const now = audioContext.currentTime;
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  const endTime = now + duration;
+
+  oscillator.type = options.type || "square";
+  oscillator.frequency.setValueAtTime(frequency, now);
+
+  if (options.endFrequency) {
+    oscillator.frequency.exponentialRampToValueAtTime(options.endFrequency, endTime);
+  }
+
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(options.volume || 0.55, now + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, endTime);
+
+  oscillator.connect(gain);
+  gain.connect(masterGain);
+  oscillator.start(now);
+  oscillator.stop(endTime + 0.02);
+}
+
+function playNoise(duration, options = {}) {
+  if (!audioContext || !masterGain) {
+    return;
+  }
+
+  const sampleRate = audioContext.sampleRate;
+  const frameCount = Math.max(1, Math.floor(sampleRate * duration));
+  const buffer = audioContext.createBuffer(1, frameCount, sampleRate);
+  const data = buffer.getChannelData(0);
+
+  for (let i = 0; i < frameCount; i += 1) {
+    data[i] = (Math.random() * 2 - 1) * (1 - i / frameCount);
+  }
+
+  const source = audioContext.createBufferSource();
+  const gain = audioContext.createGain();
+  const now = audioContext.currentTime;
+  const endTime = now + duration;
+
+  source.buffer = buffer;
+  gain.gain.setValueAtTime(options.volume || 0.3, now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, endTime);
+  source.connect(gain);
+  gain.connect(masterGain);
+  source.start(now);
+  source.stop(endTime + 0.02);
+}
+
+function playSound(name) {
+  if (isSoundMuted || !audioUnlocked || !audioContext) {
+    return;
+  }
+
+  try {
+    if (audioContext.state === "suspended") {
+      audioContext.resume().catch(() => {});
+    }
+
+    if (name === "chum") {
+      playTone(520, 0.08, { endFrequency: 780, type: "triangle", volume: 0.36 });
+    } else if (name === "frenzyBait") {
+      playTone(360, 0.11, { endFrequency: 920, type: "sawtooth", volume: 0.42 });
+      setTimeout(() => playTone(720, 0.1, { endFrequency: 1180, type: "triangle", volume: 0.34 }), 70);
+    } else if (name === "frenzyStart") {
+      [280, 420, 650].forEach((frequency, index) => {
+        setTimeout(() => playTone(frequency, 0.09, { endFrequency: frequency * 1.45, volume: 0.36 }), index * 70);
+      });
+    } else if (name === "enemyChomp") {
+      playNoise(0.08, { volume: 0.28 });
+      playTone(190, 0.08, { endFrequency: 95, type: "square", volume: 0.38 });
+      setTimeout(() => playTone(560, 0.07, { endFrequency: 840, type: "triangle", volume: 0.32 }), 45);
+    } else if (name === "loseLife") {
+      playTone(260, 0.22, { endFrequency: 110, type: "sawtooth", volume: 0.38 });
+    } else if (name === "levelClear") {
+      [520, 660, 820].forEach((frequency, index) => {
+        setTimeout(() => playTone(frequency, 0.12, { type: "triangle", volume: 0.34 }), index * 95);
+      });
+    } else if (name === "gameOver") {
+      [260, 190, 120].forEach((frequency, index) => {
+        setTimeout(() => playTone(frequency, 0.16, { type: "sawtooth", volume: 0.34 }), index * 120);
+      });
+    } else if (name === "win") {
+      [460, 620, 780, 1040].forEach((frequency, index) => {
+        setTimeout(() => playTone(frequency, 0.14, { type: "triangle", volume: 0.34 }), index * 90);
+      });
+    } else if (name === "pause") {
+      playTone(300, 0.06, { endFrequency: 220, type: "square", volume: 0.24 });
+    } else if (name === "resume" || name === "select") {
+      playTone(520, 0.06, { endFrequency: 690, type: "square", volume: 0.24 });
+    }
+  } catch (error) {
+    // Sound effects are optional. Audio errors should never stop gameplay.
+  }
+}
+
 // Game timers use this clock instead of raw performance.now(). While paused,
 // the clock returns the same value every frame so Frenzy Mode, enemy return
 // delays, and simple canvas animations do not keep counting down.
@@ -337,6 +525,8 @@ function updatePauseButton() {
 }
 
 function togglePause() {
+  initAudio();
+
   if (gameState !== GAME_STATE.PLAYING) {
     return;
   }
@@ -346,12 +536,14 @@ function togglePause() {
     pauseStartedRealTime = 0;
     pauseStartedGameTime = 0;
     isPaused = false;
+    playSound("resume");
   } else {
     const now = performance.now();
 
     pauseStartedRealTime = now;
     pauseStartedGameTime = now - totalPausedTime;
     isPaused = true;
+    playSound("pause");
   }
 
   updateFrenzyDisplay();
@@ -440,6 +632,7 @@ function startFrenzyMode() {
     return;
   }
 
+  playSound("frenzyStart");
   frenzyMode.active = true;
   frenzyMode.endTime = getGameTime() + getFrenzyDuration();
   frenzyMode.chompCount = 0;
@@ -636,6 +829,7 @@ function collectTile() {
     maze[player.row][player.col] = TILE.EMPTY;
     remainingChum -= 1;
     triggerSharkChomp();
+    playSound("chum");
     spawnChumParticles(player.x, player.y);
     updateScore(SCORE_VALUES.CHUM);
     checkLevelClear();
@@ -645,6 +839,7 @@ function collectTile() {
   if (tile === TILE.FRENZY_BAIT) {
     maze[player.row][player.col] = TILE.EMPTY;
     triggerSharkChomp();
+    playSound("frenzyBait");
     spawnFrenzyParticles(player.x, player.y);
     updateScore(SCORE_VALUES.FRENZY_BAIT);
     startFrenzyMode();
@@ -664,6 +859,7 @@ function startLevelClear() {
   player.direction = null;
   player.nextDirection = null;
   updateScore(LEVEL_CLEAR_BONUS * currentLevel);
+  playSound("levelClear");
   spawnLevelClearParticles();
   endFrenzyMode();
   updateStatusDisplay();
@@ -690,6 +886,7 @@ function startWin() {
   resetPlayerPosition();
   resetEnemies();
   updateStatusDisplay();
+  playSound("win");
 }
 
 function movePlayer() {
@@ -922,6 +1119,7 @@ function resetEnemies() {
 function loseLife() {
   endFrenzyMode();
   lives -= 1;
+  playSound("loseLife");
   updateScoreDisplay();
 
   resetPlayerPosition();
@@ -932,6 +1130,7 @@ function loseLife() {
     updateStatusDisplay();
     gameState = GAME_STATE.GAME_OVER;
     updatePauseButton();
+    playSound("gameOver");
     return;
   }
 }
@@ -982,6 +1181,7 @@ function handleEnemyCollision(enemy) {
     const chompScore = getFrenzyChompScore();
 
     triggerSharkChomp();
+    playSound("enemyChomp");
     spawnEnemyChompEffect(enemy.x, enemy.y, chompScore);
     updateScore(chompScore);
     frenzyMode.chompCount += 1;
@@ -2203,6 +2403,7 @@ window.addEventListener("keydown", (event) => {
 
 canvas.addEventListener("click", startGame);
 pauseButtonElement.addEventListener("click", togglePause);
+soundButtonElement.addEventListener("click", toggleMute);
 
 let touchStartX = 0;
 let touchStartY = 0;
@@ -2211,6 +2412,7 @@ const SWIPE_DISTANCE = 30;
 
 canvas.addEventListener("touchstart", (event) => {
   event.preventDefault();
+  initAudio();
   const touch = event.changedTouches[0];
   touchStartX = touch.clientX;
   touchStartY = touch.clientY;
@@ -2254,5 +2456,6 @@ window.addEventListener("orientationchange", resizeCanvasDisplay);
 
 updateStatusDisplay();
 updateFrenzyDisplay();
+updateSoundButton();
 resizeCanvasDisplay();
 gameLoop();

@@ -135,10 +135,18 @@ body::before {
   font-weight: 700;
 }
 
-.pause-button {
+.game-controls {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  width: min(100%, 360px);
+  margin: 0 auto clamp(8px, 1.5vh, 12px);
+}
+
+.control-button {
   flex: 0 0 auto;
   min-width: 120px;
-  margin: 0 auto clamp(8px, 1.5vh, 12px);
   padding: 9px 18px;
   color: var(--foam);
   font: 700 1rem "Trebuchet MS", "Lucida Console", monospace;
@@ -153,15 +161,15 @@ body::before {
   text-shadow: 0 0 8px rgba(217, 251, 255, 0.65);
 }
 
-.pause-button:disabled {
+.control-button:disabled {
   color: rgba(217, 251, 255, 0.55);
   background: rgba(4, 24, 39, 0.8);
   border-color: rgba(217, 251, 255, 0.35);
   cursor: not-allowed;
 }
 
-.pause-button:not(:disabled):hover,
-.pause-button:not(:disabled):focus-visible {
+.control-button:not(:disabled):hover,
+.control-button:not(:disabled):focus-visible {
   color: #03111f;
   background:
     linear-gradient(180deg, var(--gold), var(--soft-coral));
@@ -241,7 +249,14 @@ body::before {
     font-size: 1rem;
   }
 
-  .pause-button {
+  .game-controls {
+    width: min(100%, 300px);
+    gap: 8px;
+  }
+
+  .control-button {
+    min-width: 0;
+    flex: 1 1 0;
     width: min(100%, 180px);
     padding: 7px 14px;
   }
@@ -265,7 +280,7 @@ body::before {
     padding: 5px 8px;
   }
 
-  .pause-button {
+  .control-button {
     padding: 5px 12px;
   }
 

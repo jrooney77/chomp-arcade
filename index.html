@@ -44,15 +44,26 @@
       </div>
     </section>
 
-    <button
-      class="pause-button"
-      id="pauseButton"
-      type="button"
-      aria-pressed="false"
-      disabled
-    >
-      Pause
-    </button>
+    <div class="game-controls" aria-label="Game controls">
+      <button
+        class="control-button"
+        id="pauseButton"
+        type="button"
+        aria-pressed="false"
+        disabled
+      >
+        Pause
+      </button>
+
+      <button
+        class="control-button"
+        id="soundButton"
+        type="button"
+        aria-pressed="false"
+      >
+        Sound: On
+      </button>
+    </div>
 
     <canvas
       id="gameCanvas"
