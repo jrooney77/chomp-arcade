@@ -8,6 +8,8 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - Start screen with title, subtitle, objective text, and start prompt.
 - Spacebar, click, or tap input to switch into the playing screen.
 - Tile-based maze rendered on the canvas.
+- Cartoon player shark with smooth maze movement.
+- Arrow Key, WASD, and mobile swipe controls.
 - No external libraries.
 
 ## Maze Grid
@@ -26,9 +28,11 @@ The canvas uses 32-pixel tiles, with 19 columns and 15 rows. That creates an int
 
 Open `index.html` in a browser. No build step or local server is required.
 
-To test the start screen:
+To test the game:
 
 1. Open `index.html`.
 2. Confirm the CHOMP start screen is visible.
 3. Press Space, click the canvas, or tap the canvas.
-4. Confirm the maze appears.
+4. Confirm the maze appears with the shark in the center path.
+5. Move with Arrow Keys or WASD.
+6. On mobile, tap to start and swipe on the canvas to turn the shark.

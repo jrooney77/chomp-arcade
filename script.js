@@ -29,6 +29,25 @@ const TILE = {
   EMPTY: 4,
 };
 
+// Directions use both tile movement (row/col) and canvas movement (x/y).
+const DIRECTIONS = {
+  up: { row: -1, col: 0, x: 0, y: -1, angle: -Math.PI / 2 },
+  right: { row: 0, col: 1, x: 1, y: 0, angle: 0 },
+  down: { row: 1, col: 0, x: 0, y: 1, angle: Math.PI / 2 },
+  left: { row: 0, col: -1, x: -1, y: 0, angle: Math.PI },
+};
+
+const KEY_TO_DIRECTION = {
+  ArrowUp: "up",
+  KeyW: "up",
+  ArrowRight: "right",
+  KeyD: "right",
+  ArrowDown: "down",
+  KeyS: "down",
+  ArrowLeft: "left",
+  KeyA: "left",
+};
+
 // 0 = wall, 1 = path, 2 = chum, 3 = frenzy bait, 4 = empty water.
 // This layout is intentionally simple while leaving room for later shark movement.
 const maze = [
@@ -49,10 +68,120 @@ const maze = [
   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ];
 
+const PLAYER_START = {
+  row: 7,
+  col: 9,
+};
+
+function getTileCenter(row, col) {
+  return {
+    x: col * TILE_SIZE + TILE_SIZE / 2,
+    y: row * TILE_SIZE + TILE_SIZE / 2,
+  };
+}
+
+const playerStartCenter = getTileCenter(PLAYER_START.row, PLAYER_START.col);
+
+const player = {
+  x: playerStartCenter.x,
+  y: playerStartCenter.y,
+  row: PLAYER_START.row,
+  col: PLAYER_START.col,
+  direction: null,
+  nextDirection: null,
+  speed: 2,
+};
+
 function startGame() {
   if (gameState === GAME_STATE.START) {
     gameState = GAME_STATE.PLAYING;
   }
+}
+
+function setPlayerNextDirection(direction) {
+  if (gameState !== GAME_STATE.PLAYING || !DIRECTIONS[direction]) {
+    return;
+  }
+
+  player.nextDirection = direction;
+}
+
+// Treat anything outside the maze as a wall so the shark cannot leave the canvas.
+function isWall(row, col) {
+  if (row < 0 || row >= ROWS || col < 0 || col >= COLS) {
+    return true;
+  }
+
+  return maze[row][col] === TILE.WALL;
+}
+
+// Every non-wall tile is currently safe to swim through.
+function isWalkable(row, col) {
+  return !isWall(row, col);
+}
+
+// This checks the tile directly beside the player in the requested direction.
+// It works best when called while the player is centered on a tile.
+function canMove(directionName) {
+  const direction = DIRECTIONS[directionName];
+
+  if (!direction) {
+    return false;
+  }
+
+  const nextRow = player.row + direction.row;
+  const nextCol = player.col + direction.col;
+
+  return isWalkable(nextRow, nextCol);
+}
+
+function updatePlayerTile() {
+  player.row = Math.floor(player.y / TILE_SIZE);
+  player.col = Math.floor(player.x / TILE_SIZE);
+}
+
+function isPlayerCenteredOnTile() {
+  const center = getTileCenter(player.row, player.col);
+
+  return (
+    Math.abs(player.x - center.x) <= player.speed / 2 &&
+    Math.abs(player.y - center.y) <= player.speed / 2
+  );
+}
+
+function snapPlayerToTileCenter() {
+  const center = getTileCenter(player.row, player.col);
+  player.x = center.x;
+  player.y = center.y;
+}
+
+function movePlayer() {
+  updatePlayerTile();
+
+  // Turning and wall checks happen at tile centers. This keeps movement smooth
+  // while still respecting the maze grid.
+  if (isPlayerCenteredOnTile()) {
+    snapPlayerToTileCenter();
+    updatePlayerTile();
+
+    if (canMove(player.nextDirection)) {
+      player.direction = player.nextDirection;
+    }
+
+    if (!canMove(player.direction)) {
+      player.direction = null;
+      return;
+    }
+  }
+
+  if (!player.direction) {
+    return;
+  }
+
+  const direction = DIRECTIONS[player.direction];
+  player.x += direction.x * player.speed;
+  player.y += direction.y * player.speed;
+  updatePlayerTile();
 }
 
 function drawWaterTile(x, y) {
@@ -106,6 +235,70 @@ function drawFrenzyBait(x, y) {
   ctx.arc(centerX, centerY, 5, 0, Math.PI * 2);
   ctx.fill();
   ctx.shadowBlur = 0;
+}
+
+function drawPlayerShark() {
+  const facing = player.direction || player.nextDirection || "right";
+  const direction = DIRECTIONS[facing];
+
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  ctx.rotate(direction.angle);
+
+  ctx.shadowColor = "rgba(217, 251, 255, 0.45)";
+  ctx.shadowBlur = 8;
+
+  ctx.fillStyle = "#6f9fb7";
+  ctx.strokeStyle = "#d9fbff";
+  ctx.lineWidth = 2;
+
+  // Tail.
+  ctx.beginPath();
+  ctx.moveTo(-12, 0);
+  ctx.lineTo(-24, -10);
+  ctx.lineTo(-22, 0);
+  ctx.lineTo(-24, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Body.
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 15, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Top fin.
+  ctx.fillStyle = "#8cb9c9";
+  ctx.beginPath();
+  ctx.moveTo(-3, -8);
+  ctx.lineTo(4, -18);
+  ctx.lineTo(9, -7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // White belly.
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#f3fbff";
+  ctx.beginPath();
+  ctx.ellipse(4, 4, 9, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eye and small mouth line.
+  ctx.fillStyle = "#07131f";
+  ctx.beginPath();
+  ctx.arc(9, -4, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#1d3d4f";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(8, 5);
+  ctx.quadraticCurveTo(12, 7, 14, 3);
+  ctx.stroke();
+
+  ctx.restore();
 }
 
 function drawMaze() {
@@ -180,13 +373,23 @@ function gameLoop() {
   }
 
   if (gameState === GAME_STATE.PLAYING) {
+    movePlayer();
     drawMaze();
+    drawPlayerShark();
   }
 
   requestAnimationFrame(gameLoop);
 }
 
 window.addEventListener("keydown", (event) => {
+  const direction = KEY_TO_DIRECTION[event.code];
+
+  if (direction) {
+    event.preventDefault();
+    setPlayerNextDirection(direction);
+    return;
+  }
+
   if (event.code === "Space") {
     event.preventDefault();
     startGame();
@@ -194,9 +397,50 @@ window.addEventListener("keydown", (event) => {
 });
 
 canvas.addEventListener("click", startGame);
+
+let touchStartX = 0;
+let touchStartY = 0;
+let touchStarted = false;
+const SWIPE_DISTANCE = 30;
+
 canvas.addEventListener("touchstart", (event) => {
   event.preventDefault();
-  startGame();
+  const touch = event.changedTouches[0];
+  touchStartX = touch.clientX;
+  touchStartY = touch.clientY;
+  touchStarted = true;
+});
+
+canvas.addEventListener("touchend", (event) => {
+  event.preventDefault();
+
+  if (!touchStarted) {
+    return;
+  }
+
+  const touch = event.changedTouches[0];
+  const deltaX = touch.clientX - touchStartX;
+  const deltaY = touch.clientY - touchStartY;
+  const absX = Math.abs(deltaX);
+  const absY = Math.abs(deltaY);
+  const isSwipe = Math.max(absX, absY) >= SWIPE_DISTANCE;
+
+  touchStarted = false;
+
+  if (!isSwipe) {
+    startGame();
+    return;
+  }
+
+  if (absX > absY) {
+    setPlayerNextDirection(deltaX > 0 ? "right" : "left");
+  } else {
+    setPlayerNextDirection(deltaY > 0 ? "down" : "up");
+  }
+});
+
+canvas.addEventListener("touchcancel", () => {
+  touchStarted = false;
 });
 
 gameLoop();

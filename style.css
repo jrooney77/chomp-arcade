@@ -58,6 +58,7 @@ body {
   width: min(100%, 608px);
   height: auto;
   margin: 0 auto;
+  touch-action: none;
   image-rendering: pixelated;
   background: #03111f;
   border: 4px solid var(--coral);
