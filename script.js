@@ -5,6 +5,7 @@ const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const scoreValueElement = document.getElementById("scoreValue");
 const chumValueElement = document.getElementById("chumValue");
+const livesValueElement = document.getElementById("livesValue");
 
 // A tile size of 32 gives us a clear retro maze grid.
 const TILE_SIZE = 32;
@@ -18,6 +19,7 @@ canvas.height = ROWS * TILE_SIZE;
 const GAME_STATE = {
   START: "start",
   PLAYING: "playing",
+  GAME_OVER: "gameOver",
 };
 
 let gameState = GAME_STATE.START;
@@ -35,6 +37,9 @@ const SCORE_VALUES = {
   CHUM: 10,
   FRENZY_BAIT: 50,
 };
+
+const STARTING_LIVES = 3;
+const PLAYER_HIT_DISTANCE = 22;
 
 // Directions use both tile movement (row/col) and canvas movement (x/y).
 const DIRECTIONS = {
@@ -57,7 +62,7 @@ const KEY_TO_DIRECTION = {
 
 // 0 = wall, 1 = path, 2 = chum, 3 = frenzy bait, 4 = empty water.
 // This layout is intentionally simple while leaving room for later shark movement.
-const maze = [
+const INITIAL_MAZE = [
   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   [0, 3, 2, 2, 2, 0, 2, 2, 2, 4, 2, 2, 2, 0, 2, 2, 2, 3, 0],
   [0, 2, 0, 0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 0],
@@ -75,12 +80,20 @@ const maze = [
   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ];
 
+let maze = cloneMaze(INITIAL_MAZE);
 let score = 0;
+let lives = STARTING_LIVES;
 let remainingChum = countRemainingChum();
 
 const PLAYER_START = {
-  row: 7,
+  row: 1,
   col: 9,
+};
+
+const ENEMY_START = {
+  row: 7,
+  col: 10,
+  direction: "right",
 };
 
 function getTileCenter(row, col) {
@@ -102,10 +115,22 @@ const player = {
   speed: 2,
 };
 
+const enemies = [
+  createEnemy("dolphinPatrol", ENEMY_START.row, ENEMY_START.col, ENEMY_START.direction),
+];
+
 function startGame() {
   if (gameState === GAME_STATE.START) {
     gameState = GAME_STATE.PLAYING;
   }
+
+  if (gameState === GAME_STATE.GAME_OVER) {
+    restartGame();
+  }
+}
+
+function cloneMaze(sourceMaze) {
+  return sourceMaze.map((row) => row.slice());
 }
 
 function countRemainingChum() {
@@ -130,6 +155,18 @@ function updateScore(points) {
 function updateScoreDisplay() {
   scoreValueElement.textContent = score;
   chumValueElement.textContent = remainingChum;
+  livesValueElement.textContent = lives;
+}
+
+function restartGame() {
+  maze = cloneMaze(INITIAL_MAZE);
+  score = 0;
+  lives = STARTING_LIVES;
+  remainingChum = countRemainingChum();
+  resetPlayerPosition();
+  resetEnemies();
+  updateScoreDisplay();
+  gameState = GAME_STATE.PLAYING;
 }
 
 function setPlayerNextDirection(direction) {
@@ -174,19 +211,43 @@ function updatePlayerTile() {
   player.col = Math.floor(player.x / TILE_SIZE);
 }
 
-function isPlayerCenteredOnTile() {
-  const center = getTileCenter(player.row, player.col);
+function updateEnemyTile(enemy) {
+  enemy.row = Math.floor(enemy.y / TILE_SIZE);
+  enemy.col = Math.floor(enemy.x / TILE_SIZE);
+}
+
+function isEntityCenteredOnTile(entity) {
+  const center = getTileCenter(entity.row, entity.col);
 
   return (
-    Math.abs(player.x - center.x) <= player.speed / 2 &&
-    Math.abs(player.y - center.y) <= player.speed / 2
+    Math.abs(entity.x - center.x) <= entity.speed / 2 &&
+    Math.abs(entity.y - center.y) <= entity.speed / 2
   );
 }
 
+function isPlayerCenteredOnTile() {
+  return isEntityCenteredOnTile(player);
+}
+
+function snapEntityToTileCenter(entity) {
+  const center = getTileCenter(entity.row, entity.col);
+  entity.x = center.x;
+  entity.y = center.y;
+}
+
 function snapPlayerToTileCenter() {
-  const center = getTileCenter(player.row, player.col);
+  snapEntityToTileCenter(player);
+}
+
+function resetPlayerPosition() {
+  const center = getTileCenter(PLAYER_START.row, PLAYER_START.col);
+
   player.x = center.x;
   player.y = center.y;
+  player.row = PLAYER_START.row;
+  player.col = PLAYER_START.col;
+  player.direction = null;
+  player.nextDirection = null;
 }
 
 function collectTile() {
@@ -239,6 +300,124 @@ function movePlayer() {
   player.x += direction.x * player.speed;
   player.y += direction.y * player.speed;
   updatePlayerTile();
+}
+
+function createEnemy(type, row, col, direction) {
+  if (!isWalkable(row, col)) {
+    throw new Error(`${type} cannot spawn inside a wall at row ${row}, col ${col}.`);
+  }
+
+  const center = getTileCenter(row, col);
+
+  return {
+    x: center.x,
+    y: center.y,
+    row,
+    col,
+    direction,
+    speed: 1,
+    type,
+    startRow: row,
+    startCol: col,
+    startDirection: direction,
+  };
+}
+
+function getValidDirections(row, col) {
+  return Object.keys(DIRECTIONS).filter((directionName) => {
+    const direction = DIRECTIONS[directionName];
+    return isWalkable(row + direction.row, col + direction.col);
+  });
+}
+
+function chooseEnemyDirection(enemy) {
+  const validDirections = getValidDirections(enemy.row, enemy.col);
+
+  if (validDirections.length === 0) {
+    return null;
+  }
+
+  const canContinue = validDirections.includes(enemy.direction);
+  const isIntersection = validDirections.length > 2;
+
+  if (!canContinue) {
+    return validDirections[Math.floor(Math.random() * validDirections.length)];
+  }
+
+  // At intersections, the Dolphin Patrol usually keeps going but sometimes
+  // picks another open corridor so its patrol path is not fully predictable.
+  if (isIntersection && Math.random() < 0.25) {
+    return validDirections[Math.floor(Math.random() * validDirections.length)];
+  }
+
+  return enemy.direction;
+}
+
+function updateEnemies() {
+  enemies.forEach((enemy) => {
+    updateEnemyTile(enemy);
+
+    // Like the shark, enemies make turns only at tile centers. They reuse the
+    // same walkable-tile checks so they cannot swim through reef walls. The
+    // dolphin does not check walls mid-tile, because that can stop it before it
+    // reaches the next tile center where it is allowed to turn.
+    if (isEntityCenteredOnTile(enemy)) {
+      snapEntityToTileCenter(enemy);
+      updateEnemyTile(enemy);
+      enemy.direction = chooseEnemyDirection(enemy);
+    }
+
+    if (!enemy.direction) {
+      return;
+    }
+
+    const direction = DIRECTIONS[enemy.direction];
+    enemy.x += direction.x * enemy.speed;
+    enemy.y += direction.y * enemy.speed;
+    updateEnemyTile(enemy);
+  });
+}
+
+function resetEnemyPosition(enemy) {
+  const center = getTileCenter(enemy.startRow, enemy.startCol);
+
+  enemy.x = center.x;
+  enemy.y = center.y;
+  enemy.row = enemy.startRow;
+  enemy.col = enemy.startCol;
+  enemy.direction = enemy.startDirection;
+}
+
+function resetEnemies() {
+  enemies.forEach(resetEnemyPosition);
+}
+
+function loseLife() {
+  lives -= 1;
+  updateScoreDisplay();
+
+  resetPlayerPosition();
+  resetEnemies();
+
+  if (lives <= 0) {
+    lives = 0;
+    updateScoreDisplay();
+    gameState = GAME_STATE.GAME_OVER;
+    return;
+  }
+}
+
+function checkPlayerEnemyCollision() {
+  for (let i = 0; i < enemies.length; i += 1) {
+    const enemy = enemies[i];
+    const distance = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+
+    // A simple circle-distance check is enough for these cartoon shapes.
+    if (distance < PLAYER_HIT_DISTANCE) {
+      loseLife();
+      return;
+    }
+  }
 }
 
 function drawWaterTile(x, y) {
@@ -358,6 +537,79 @@ function drawPlayerShark() {
   ctx.restore();
 }
 
+function drawDolphinPatrol(enemy) {
+  const direction = DIRECTIONS[enemy.direction || enemy.startDirection];
+
+  ctx.save();
+  ctx.translate(enemy.x, enemy.y);
+  ctx.rotate(direction.angle);
+
+  ctx.shadowColor = "rgba(79, 227, 255, 0.45)";
+  ctx.shadowBlur = 7;
+
+  // Tail.
+  ctx.fillStyle = "#7fd8ff";
+  ctx.strokeStyle = "#d9fbff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-12, 0);
+  ctx.lineTo(-23, -8);
+  ctx.lineTo(-20, 0);
+  ctx.lineTo(-23, 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Body and rounded nose.
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 14, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(12, 0, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Curved dorsal fin.
+  ctx.fillStyle = "#b7ecff";
+  ctx.beginPath();
+  ctx.moveTo(-4, -7);
+  ctx.quadraticCurveTo(0, -17, 8, -7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Belly, eye, and smile.
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#f4fdff";
+  ctx.beginPath();
+  ctx.ellipse(4, 4, 8, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#06243a";
+  ctx.beginPath();
+  ctx.arc(12, -4, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#17617b";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(10, 4);
+  ctx.quadraticCurveTo(14, 7, 18, 4);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawEnemies() {
+  enemies.forEach((enemy) => {
+    if (enemy.type === "dolphinPatrol") {
+      drawDolphinPatrol(enemy);
+    }
+  });
+}
+
 function drawMaze() {
   for (let row = 0; row < ROWS; row += 1) {
     for (let col = 0; col < COLS; col += 1) {
@@ -418,6 +670,38 @@ function drawStartScreen() {
   ctx.fillText("Press Space or Tap to Start", centerX, 348);
 }
 
+function drawGameOverScreen() {
+  const centerX = canvas.width / 2;
+
+  ctx.fillStyle = "#041827";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "rgba(255, 95, 109, 0.1)";
+  for (let i = 0; i < 16; i += 1) {
+    ctx.beginPath();
+    ctx.arc((i * 83) % canvas.width, 70 + ((i * 47) % 330), 20, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.fillStyle = "#ff5f6d";
+  ctx.font = "bold 58px Trebuchet MS, Lucida Console, monospace";
+  ctx.shadowColor = "rgba(255, 95, 109, 0.9)";
+  ctx.shadowBlur = 14;
+  ctx.fillText("GAME OVER", centerX, 154);
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#d9fbff";
+  ctx.font = "bold 24px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText(`Final Score: ${score}`, centerX, 232);
+
+  ctx.fillStyle = "#ffcf5c";
+  ctx.font = "bold 22px Trebuchet MS, Lucida Console, monospace";
+  ctx.fillText("Press Space or Tap to Restart", centerX, 320);
+}
+
 function clearCanvas() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
@@ -431,8 +715,18 @@ function gameLoop() {
 
   if (gameState === GAME_STATE.PLAYING) {
     movePlayer();
+    updateEnemies();
+    checkPlayerEnemyCollision();
+  }
+
+  if (gameState === GAME_STATE.PLAYING) {
     drawMaze();
     drawPlayerShark();
+    drawEnemies();
+  }
+
+  if (gameState === GAME_STATE.GAME_OVER) {
+    drawGameOverScreen();
   }
 
   requestAnimationFrame(gameLoop);

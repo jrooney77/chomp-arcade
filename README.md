@@ -12,6 +12,8 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - Arrow Key, WASD, and mobile swipe controls.
 - Chum and Frenzy Bait collection with score tracking.
 - Remaining chum counter during gameplay.
+- Dolphin Patrol enemy with maze movement.
+- Lives, Game Over screen, and restart flow.
 - No external libraries.
 
 ## Scoring
@@ -19,6 +21,14 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - Chum is worth 10 points.
 - Frenzy Bait is worth 50 points.
 - Collected items disappear from the maze.
+
+## Enemies
+
+- Dolphin Patrol moves through open maze corridors.
+- The shark starts in the top center corridor, and Dolphin Patrol starts near the maze middle.
+- The dolphin keeps moving when possible and chooses a valid new direction when blocked.
+- At intersections, it sometimes picks a different valid direction.
+- Touching the dolphin costs 1 life and resets the shark and dolphin positions.
 
 ## Maze Grid
 
@@ -45,3 +55,5 @@ To test the game:
 5. Move with Arrow Keys or WASD.
 6. On mobile, tap to start and swipe on the canvas to turn the shark.
 7. Swim over chum or Frenzy Bait and confirm the score updates.
+8. Touch the Dolphin Patrol and confirm lives decrease.
+9. Lose all lives, then press Space or tap to restart.
