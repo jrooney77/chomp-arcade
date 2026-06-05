@@ -182,6 +182,27 @@ body::before {
   color: #ffcf5c;
 }
 
+#frenzyHud {
+  border-color: rgba(255, 207, 92, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 0 18px rgba(255, 122, 61, 0.32);
+}
+
+#frenzyHud.is-warning {
+  border-color: rgba(255, 95, 109, 0.95);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 0 20px rgba(255, 95, 109, 0.48);
+}
+
+#frenzyHud.is-warning #frenzyValue {
+  color: #ff9b87;
+  text-shadow:
+    0 0 8px rgba(255, 95, 109, 0.82),
+    0 0 14px rgba(255, 207, 92, 0.42);
+}
+
 #debugValue {
   color: #4fe3ff;
 }
