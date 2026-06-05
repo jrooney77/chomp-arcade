@@ -81,6 +81,10 @@ const LEVEL_CLEAR_BONUS = 500;
 const HIGH_SCORE_STORAGE_KEY = "chompHighScore";
 const SOUND_MUTED_STORAGE_KEY = "chompSoundMuted";
 const MASTER_VOLUME = 0.18;
+const REVERB_ENABLED = true;
+const REVERB_DELAY_SECONDS = 0.12;
+const REVERB_FEEDBACK = 0.22;
+const REVERB_WET_GAIN = 0.16;
 const MAX_PARTICLES = 120;
 const SHARK_BUBBLE_INTERVAL_MS = 95;
 const SHARK_CHOMP_BOOST_MS = 280;
@@ -340,6 +344,7 @@ function loadSoundMuted() {
 let isSoundMuted = loadSoundMuted();
 let audioContext = null;
 let masterGain = null;
+let audioBus = null;
 let audioUnlocked = false;
 
 function saveSoundMuted() {
@@ -353,6 +358,32 @@ function saveSoundMuted() {
 function updateSoundButton() {
   soundButtonElement.textContent = isSoundMuted ? "Sound: Off" : "Sound: On";
   soundButtonElement.setAttribute("aria-pressed", String(!isSoundMuted));
+}
+
+function createAudioBus() {
+  const dryGain = audioContext.createGain();
+  const wetInput = audioContext.createGain();
+  const delay = audioContext.createDelay(0.4);
+  const feedback = audioContext.createGain();
+  const wetGain = audioContext.createGain();
+
+  // Dry signal is the clean, immediate arcade sound.
+  dryGain.gain.value = 1;
+  dryGain.connect(masterGain);
+
+  // Wet signal is a short delay with quiet feedback for subtle underwater space.
+  wetInput.gain.value = REVERB_ENABLED ? 1 : 0;
+  delay.delayTime.value = REVERB_DELAY_SECONDS;
+  feedback.gain.value = REVERB_FEEDBACK;
+  wetGain.gain.value = REVERB_WET_GAIN;
+
+  wetInput.connect(delay);
+  delay.connect(feedback);
+  feedback.connect(delay);
+  delay.connect(wetGain);
+  wetGain.connect(masterGain);
+
+  return { dryGain, wetInput };
 }
 
 // Browsers, especially iPhone Safari, block audio until a user gesture happens.
@@ -374,6 +405,7 @@ function initAudio() {
     masterGain = masterGain || audioContext.createGain();
     masterGain.gain.value = isSoundMuted ? 0 : MASTER_VOLUME;
     masterGain.connect(audioContext.destination);
+    audioBus = audioBus || createAudioBus();
 
     if (audioContext.state === "suspended") {
       audioContext.resume().catch(() => {});
@@ -406,13 +438,14 @@ function toggleMute() {
 }
 
 function playTone(frequency, duration, options = {}) {
-  if (!audioContext || !masterGain) {
+  if (!audioContext || !audioBus) {
     return;
   }
 
   const now = audioContext.currentTime;
   const oscillator = audioContext.createOscillator();
   const gain = audioContext.createGain();
+  const echoSend = audioContext.createGain();
   const endTime = now + duration;
 
   oscillator.type = options.type || "square";
@@ -425,15 +458,18 @@ function playTone(frequency, duration, options = {}) {
   gain.gain.setValueAtTime(0.0001, now);
   gain.gain.exponentialRampToValueAtTime(options.volume || 0.55, now + 0.015);
   gain.gain.exponentialRampToValueAtTime(0.0001, endTime);
+  echoSend.gain.value = options.echoAmount ?? 0.45;
 
   oscillator.connect(gain);
-  gain.connect(masterGain);
+  gain.connect(audioBus.dryGain);
+  gain.connect(echoSend);
+  echoSend.connect(audioBus.wetInput);
   oscillator.start(now);
   oscillator.stop(endTime + 0.02);
 }
 
 function playNoise(duration, options = {}) {
-  if (!audioContext || !masterGain) {
+  if (!audioContext || !audioBus) {
     return;
   }
 
@@ -448,14 +484,18 @@ function playNoise(duration, options = {}) {
 
   const source = audioContext.createBufferSource();
   const gain = audioContext.createGain();
+  const echoSend = audioContext.createGain();
   const now = audioContext.currentTime;
   const endTime = now + duration;
 
   source.buffer = buffer;
   gain.gain.setValueAtTime(options.volume || 0.3, now);
   gain.gain.exponentialRampToValueAtTime(0.0001, endTime);
+  echoSend.gain.value = options.echoAmount ?? 0.35;
   source.connect(gain);
-  gain.connect(masterGain);
+  gain.connect(audioBus.dryGain);
+  gain.connect(echoSend);
+  echoSend.connect(audioBus.wetInput);
   source.start(now);
   source.stop(endTime + 0.02);
 }
@@ -471,36 +511,40 @@ function playSound(name) {
     }
 
     if (name === "chum") {
-      playTone(520, 0.08, { endFrequency: 780, type: "triangle", volume: 0.36 });
+      playTone(520, 0.08, { endFrequency: 780, type: "triangle", volume: 0.34, echoAmount: 0.18 });
     } else if (name === "frenzyBait") {
-      playTone(360, 0.11, { endFrequency: 920, type: "sawtooth", volume: 0.42 });
-      setTimeout(() => playTone(720, 0.1, { endFrequency: 1180, type: "triangle", volume: 0.34 }), 70);
+      playTone(360, 0.11, { endFrequency: 920, type: "sawtooth", volume: 0.4, echoAmount: 0.52 });
+      setTimeout(() => playTone(720, 0.1, { endFrequency: 1180, type: "triangle", volume: 0.32, echoAmount: 0.48 }), 70);
     } else if (name === "frenzyStart") {
       [280, 420, 650].forEach((frequency, index) => {
-        setTimeout(() => playTone(frequency, 0.09, { endFrequency: frequency * 1.45, volume: 0.36 }), index * 70);
+        setTimeout(() => playTone(frequency, 0.09, {
+          endFrequency: frequency * 1.45,
+          volume: 0.34,
+          echoAmount: 0.55,
+        }), index * 70);
       });
     } else if (name === "enemyChomp") {
-      playNoise(0.08, { volume: 0.28 });
-      playTone(190, 0.08, { endFrequency: 95, type: "square", volume: 0.38 });
-      setTimeout(() => playTone(560, 0.07, { endFrequency: 840, type: "triangle", volume: 0.32 }), 45);
+      playNoise(0.08, { volume: 0.24, echoAmount: 0.25 });
+      playTone(190, 0.08, { endFrequency: 95, type: "square", volume: 0.34, echoAmount: 0.3 });
+      setTimeout(() => playTone(560, 0.07, { endFrequency: 840, type: "triangle", volume: 0.3, echoAmount: 0.35 }), 45);
     } else if (name === "loseLife") {
-      playTone(260, 0.22, { endFrequency: 110, type: "sawtooth", volume: 0.38 });
+      playTone(260, 0.22, { endFrequency: 110, type: "sawtooth", volume: 0.34, echoAmount: 0.38 });
     } else if (name === "levelClear") {
       [520, 660, 820].forEach((frequency, index) => {
-        setTimeout(() => playTone(frequency, 0.12, { type: "triangle", volume: 0.34 }), index * 95);
+        setTimeout(() => playTone(frequency, 0.12, { type: "triangle", volume: 0.32, echoAmount: 0.55 }), index * 95);
       });
     } else if (name === "gameOver") {
       [260, 190, 120].forEach((frequency, index) => {
-        setTimeout(() => playTone(frequency, 0.16, { type: "sawtooth", volume: 0.34 }), index * 120);
+        setTimeout(() => playTone(frequency, 0.16, { type: "sawtooth", volume: 0.3, echoAmount: 0.34 }), index * 120);
       });
     } else if (name === "win") {
       [460, 620, 780, 1040].forEach((frequency, index) => {
-        setTimeout(() => playTone(frequency, 0.14, { type: "triangle", volume: 0.34 }), index * 90);
+        setTimeout(() => playTone(frequency, 0.14, { type: "triangle", volume: 0.32, echoAmount: 0.62 }), index * 90);
       });
     } else if (name === "pause") {
-      playTone(300, 0.06, { endFrequency: 220, type: "square", volume: 0.24 });
+      playTone(300, 0.06, { endFrequency: 220, type: "square", volume: 0.22, echoAmount: 0.08 });
     } else if (name === "resume" || name === "select") {
-      playTone(520, 0.06, { endFrequency: 690, type: "square", volume: 0.24 });
+      playTone(520, 0.06, { endFrequency: 690, type: "square", volume: 0.22, echoAmount: 0.08 });
     }
   } catch (error) {
     // Sound effects are optional. Audio errors should never stop gameplay.
