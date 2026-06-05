@@ -1507,58 +1507,62 @@ function drawSharkMouth(chompAmount, isFrenzy) {
 }
 
 function drawSharkTail() {
-  // Two clean tail lobes with a small notch between them.
+  // Two clear tail lobes with no center prong or star-like middle point.
   ctx.beginPath();
-  ctx.moveTo(-14, -1);
-  ctx.quadraticCurveTo(-21, -5, -27, -12);
-  ctx.quadraticCurveTo(-25, -4, -20, -1);
-  ctx.lineTo(-14, 0);
-  ctx.lineTo(-20, 1);
-  ctx.quadraticCurveTo(-25, 4, -27, 12);
-  ctx.quadraticCurveTo(-21, 5, -14, 1);
+  ctx.moveTo(-17, -1.2);
+  ctx.quadraticCurveTo(-24, -4.5, -29, -11);
+  ctx.quadraticCurveTo(-27, -3.6, -19, -0.6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(-17, 1.2);
+  ctx.quadraticCurveTo(-24, 4.5, -29, 11);
+  ctx.quadraticCurveTo(-27, 3.6, -19, 0.6);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 }
 
 function drawSharkBody() {
-  // Cleaner shark body: arched back, pointed nose, and flatter underside.
+  // Longer torpedo body with an arched back and flatter underside.
   ctx.beginPath();
-  ctx.moveTo(-16, -7);
-  ctx.quadraticCurveTo(0, -14, 18, -5);
-  ctx.lineTo(23, 0);
-  ctx.quadraticCurveTo(17, 4.8, 4, 7.4);
-  ctx.lineTo(-10, 7.4);
-  ctx.quadraticCurveTo(-18, 5.6, -20, 1);
-  ctx.quadraticCurveTo(-21, -3.5, -16, -7);
+  ctx.moveTo(-18, -6.4);
+  ctx.quadraticCurveTo(-2, -13.2, 18, -5.2);
+  ctx.quadraticCurveTo(24, -2.6, 26, 0);
+  ctx.quadraticCurveTo(20, 3.8, 6, 5.8);
+  ctx.lineTo(-12, 5.8);
+  ctx.quadraticCurveTo(-19, 4.2, -21, 0.4);
+  ctx.quadraticCurveTo(-21, -3.2, -18, -6.4);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 }
 
 function drawSharkDorsalFin(isFrenzy) {
-  // Swept-back dorsal fin integrated into the top of the body.
+  // Lower, wider swept-back dorsal fin integrated into the body.
   ctx.fillStyle = isFrenzy ? "#ffcf5c" : "#b7d9e6";
   ctx.beginPath();
-  ctx.moveTo(-7, -8);
-  ctx.lineTo(-1, -16);
-  ctx.quadraticCurveTo(4, -11, 9, -7);
-  ctx.lineTo(1, -6);
+  ctx.moveTo(-9, -7.3);
+  ctx.lineTo(-3.5, -13.2);
+  ctx.quadraticCurveTo(0, -10.2, 8.5, -6.8);
+  ctx.lineTo(-1.5, -6.2);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 }
 
 function drawSharkBelly() {
-  // Flatter white belly patch so the underside feels less bulky.
+  // White belly follows a smooth, shallow lower curve instead of a round bulge.
   ctx.shadowBlur = 0;
   ctx.fillStyle = "#f3fbff";
   ctx.beginPath();
-  ctx.moveTo(-3, 4.6);
-  ctx.quadraticCurveTo(8, 3, 18, 1.2);
-  ctx.quadraticCurveTo(13, 6.8, 2, 7.3);
-  ctx.lineTo(-7, 7);
-  ctx.quadraticCurveTo(-9, 5.8, -3, 4.6);
+  ctx.moveTo(-5, 4.3);
+  ctx.quadraticCurveTo(7, 3.1, 19, 1.1);
+  ctx.quadraticCurveTo(15, 4.8, 5, 5.7);
+  ctx.lineTo(-8, 5.6);
+  ctx.quadraticCurveTo(-9.5, 5.1, -5, 4.3);
   ctx.closePath();
   ctx.fill();
 }
