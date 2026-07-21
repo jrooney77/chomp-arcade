@@ -63,7 +63,7 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 
 ## Debug Mode
 
-- Press `D` to toggle Debug Mode.
+- Press Backquote (`) to toggle Debug Mode.
 - When Debug Mode is on, enemies are hidden, do not move, and cannot collide with the shark.
 - Press `L` while Debug Mode is on to instantly clear the current level.
 - Debug Mode is for local testing and does not remove collectibles or skip score/life reset behavior.

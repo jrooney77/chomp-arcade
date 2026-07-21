@@ -2851,7 +2851,7 @@ function gameLoop() {
 window.addEventListener("keydown", (event) => {
   const direction = KEY_TO_DIRECTION[event.code];
 
-  if (event.code === "KeyD") {
+  if (event.code === "Backquote") {
     event.preventDefault();
     toggleDebugMode();
     return;
