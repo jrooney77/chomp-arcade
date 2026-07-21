@@ -68,10 +68,12 @@ const TILE = {
 const SCORE_VALUES = {
   CHUM: 10,
   FRENZY_BAIT: 50,
+  GOLDEN_FISH: 500,
 };
 
 const STARTING_LIVES = 3;
 const PLAYER_HIT_DISTANCE = 22;
+const PUFFER_INFLATED_HIT_DISTANCE = 30;
 const BASE_FRENZY_DURATION_MS = 7000;
 const MIN_FRENZY_DURATION_MS = 5500;
 const FRENZY_CHOMP_SCORES = [200, 400, 800, 1600];
@@ -79,8 +81,20 @@ const FRENZY_LOW_TIME_MS = 2200;
 const FRENZY_START_FLASH_MS = 950;
 const FRENZY_END_FLASH_MS = 700;
 const ENEMY_RETURN_MS = 1000;
-const TOTAL_LEVELS = 3;
 const LEVEL_CLEAR_BONUS = 500;
+const MAX_PLANNED_LEVELS = 50;
+const PUFFER_INFLATE_INTERVAL_MS = 4200;
+const PUFFER_INFLATING_MS = 450;
+const PUFFER_INFLATED_MS = 1700;
+const PUFFER_DEFLATING_MS = 450;
+const GOLDEN_FISH_FIRST_CHUM_TRIGGER = 12;
+const GOLDEN_FISH_CHUM_INTERVAL = 28;
+const GOLDEN_FISH_DURATION_MS = 8000;
+const DEFAULT_GOLDEN_FISH_SETTINGS = {
+  firstChumTrigger: GOLDEN_FISH_FIRST_CHUM_TRIGGER,
+  chumInterval: GOLDEN_FISH_CHUM_INTERVAL,
+  durationMs: GOLDEN_FISH_DURATION_MS,
+};
 const HIGH_SCORE_STORAGE_KEY = "chompHighScore";
 const SOUND_MUTED_STORAGE_KEY = "chompSoundMuted";
 const MASTER_VOLUME = 0.18;
@@ -134,7 +148,9 @@ const ENEMY_SPEEDS = {
   dolphinPatrol: 1,
   electricEel: 1,
   diverDrone: 1,
+  puffer: 0.8,
 };
+const VALID_ENEMY_TYPES = Object.keys(ENEMY_SPEEDS);
 
 // Directions use both tile movement (row/col) and canvas movement (x/y).
 const DIRECTIONS = {
@@ -156,10 +172,15 @@ const KEY_TO_DIRECTION = {
 };
 
 // 0 = wall, 1 = path, 2 = chum, 3 = frenzy bait, 4 = empty water.
-// Each level owns its maze, shark start, and enemy starts. The loader clones
-// the maze so collection can edit the current level without changing templates.
+// Each level owns its data, so future levels can be added here without new
+// gameplay functions. The long-term roadmap can grow this list toward 50 levels.
 const LEVELS = [
   {
+    id: 1,
+    name: "Coral Warmup",
+    theme: "coralReef",
+    enemySpeedModifier: 0,
+    goldenFish: { ...DEFAULT_GOLDEN_FISH_SETTINGS },
     maze: [
       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       [0, 3, 2, 2, 2, 0, 2, 2, 2, 4, 2, 2, 2, 0, 2, 2, 2, 3, 0],
@@ -185,6 +206,11 @@ const LEVELS = [
     ],
   },
   {
+    id: 2,
+    name: "Puffer Crossing",
+    theme: "reefCrossing",
+    enemySpeedModifier: 0,
+    goldenFish: { ...DEFAULT_GOLDEN_FISH_SETTINGS },
     maze: [
       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       [0, 2, 2, 2, 2, 2, 0, 3, 2, 4, 2, 3, 0, 2, 2, 2, 2, 2, 0],
@@ -205,11 +231,17 @@ const LEVELS = [
     playerStart: { row: 13, col: 9 },
     enemyStarts: [
       { type: "dolphinPatrol", row: 7, col: 8, direction: "right" },
-      { type: "electricEel", row: 5, col: 17, direction: "left" },
-      { type: "diverDrone", row: 9, col: 1, direction: "right" },
+      { type: "electricEel", row: 5, col: 16, direction: "left" },
+      { type: "diverDrone", row: 9, col: 2, direction: "right" },
+      { type: "puffer", row: 7, col: 11, direction: "left" },
     ],
   },
   {
+    id: 3,
+    name: "Deep Current",
+    theme: "deepReef",
+    enemySpeedModifier: 1,
+    goldenFish: { ...DEFAULT_GOLDEN_FISH_SETTINGS },
     maze: [
       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       [0, 3, 2, 2, 2, 0, 2, 2, 2, 3, 2, 2, 2, 0, 2, 2, 2, 3, 0],
@@ -234,6 +266,227 @@ const LEVELS = [
       { type: "diverDrone", row: 9, col: 17, direction: "left" },
     ],
   },
+  {
+    id: 4,
+    name: "Current Split",
+    theme: "currentSplit",
+    enemySpeedModifier: 0,
+    goldenFish: { ...DEFAULT_GOLDEN_FISH_SETTINGS },
+    maze: [
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 3, 2, 2, 2, 2, 0, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 3, 0],
+      [0, 2, 0, 0, 2, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 0],
+      [0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 2, 2, 2, 0],
+      [0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 0, 2, 0, 0],
+      [0, 0, 0, 2, 2, 0, 2, 0, 0, 0, 2, 0, 2, 0, 2, 0, 2, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 1, 4, 1, 2, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0],
+      [0, 2, 2, 0, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 2, 2, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0],
+      [0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 2, 0, 2, 0],
+      [0, 3, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 3, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    playerStart: { row: 13, col: 9 },
+    enemyStarts: [
+      { type: "dolphinPatrol", row: 7, col: 8, direction: "right" },
+      { type: "electricEel", row: 7, col: 10, direction: "left" },
+      { type: "diverDrone", row: 5, col: 7, direction: "left" },
+      { type: "puffer", row: 7, col: 12, direction: "left" },
+    ],
+  },
+  {
+    id: 5,
+    name: "Drone Channels",
+    theme: "droneChannels",
+    enemySpeedModifier: 0,
+    goldenFish: { ...DEFAULT_GOLDEN_FISH_SETTINGS },
+    maze: [
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 0, 2, 0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 0],
+      [0, 0, 0, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0, 2, 0, 0, 0, 0],
+      [0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 1, 4, 1, 4, 1, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 2, 0, 2, 0, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 0],
+      [0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0],
+      [0, 3, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 3, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    playerStart: { row: 13, col: 9 },
+    enemyStarts: [
+      { type: "dolphinPatrol", row: 7, col: 8, direction: "right" },
+      { type: "electricEel", row: 5, col: 17, direction: "left" },
+      { type: "diverDrone", row: 7, col: 10, direction: "left" },
+      { type: "diverDrone", row: 9, col: 1, direction: "right" },
+    ],
+  },
+  {
+    id: 6,
+    name: "Puffer Passage",
+    theme: "pufferPassage",
+    enemySpeedModifier: 1,
+    goldenFish: { ...DEFAULT_GOLDEN_FISH_SETTINGS },
+    maze: [
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 3, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 3, 0],
+      [0, 2, 0, 0, 0, 0, 2, 0, 2, 0, 2, 0, 2, 0, 0, 0, 0, 2, 0],
+      [0, 2, 2, 2, 2, 0, 2, 0, 2, 2, 2, 0, 2, 0, 2, 2, 2, 2, 0],
+      [0, 0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 2, 0, 0, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 0, 2, 2, 1, 4, 1, 4, 1, 2, 2, 2, 2, 0, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 2, 0, 0, 0],
+      [0, 2, 2, 2, 2, 0, 2, 0, 2, 2, 2, 0, 2, 0, 2, 2, 2, 2, 0],
+      [0, 2, 0, 0, 0, 0, 2, 0, 2, 0, 2, 0, 2, 0, 0, 0, 0, 2, 0],
+      [0, 3, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 3, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    playerStart: { row: 13, col: 9 },
+    enemyStarts: [
+      { type: "dolphinPatrol", row: 7, col: 8, direction: "right" },
+      { type: "electricEel", row: 7, col: 10, direction: "left" },
+      { type: "diverDrone", row: 5, col: 9, direction: "left" },
+      { type: "puffer", row: 7, col: 11, direction: "left" },
+    ],
+  },
+  {
+    id: 7,
+    name: "Electric Reef",
+    theme: "electricReef",
+    enemySpeedModifier: 1,
+    goldenFish: { ...DEFAULT_GOLDEN_FISH_SETTINGS },
+    maze: [
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 3, 2, 2, 2, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 3, 0],
+      [0, 2, 0, 0, 0, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 0, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0],
+      [0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0],
+      [0, 2, 2, 2, 2, 2, 2, 1, 4, 1, 4, 1, 2, 2, 2, 2, 2, 2, 0],
+      [0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0],
+      [0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 0, 0, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 0, 0, 2, 0],
+      [0, 3, 2, 2, 2, 2, 2, 0, 2, 4, 2, 0, 2, 2, 2, 2, 2, 3, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    playerStart: { row: 13, col: 9 },
+    enemyStarts: [
+      { type: "dolphinPatrol", row: 7, col: 8, direction: "right" },
+      { type: "electricEel", row: 5, col: 1, direction: "right" },
+      { type: "electricEel", row: 5, col: 17, direction: "left" },
+      { type: "diverDrone", row: 9, col: 9, direction: "left" },
+    ],
+  },
+  {
+    id: 8,
+    name: "Guarded Depths",
+    theme: "guardedDepths",
+    enemySpeedModifier: 1,
+    goldenFish: { ...DEFAULT_GOLDEN_FISH_SETTINGS },
+    maze: [
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 3, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 3, 0],
+      [0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0],
+      [0, 0, 0, 0, 2, 0, 2, 0, 2, 2, 2, 0, 2, 0, 2, 0, 0, 0, 0],
+      [0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 0],
+      [0, 2, 0, 2, 2, 2, 0, 0, 0, 2, 0, 0, 0, 2, 2, 2, 0, 2, 0],
+      [0, 2, 2, 2, 2, 1, 2, 1, 4, 1, 4, 1, 2, 1, 2, 2, 2, 2, 0],
+      [0, 2, 0, 2, 2, 2, 0, 0, 0, 2, 0, 0, 0, 2, 2, 2, 0, 2, 0],
+      [0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 0],
+      [0, 0, 0, 0, 2, 0, 2, 0, 2, 2, 2, 0, 2, 0, 2, 0, 0, 0, 0],
+      [0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 2, 0],
+      [0, 3, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 3, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    playerStart: { row: 13, col: 9 },
+    enemyStarts: [
+      { type: "dolphinPatrol", row: 7, col: 8, direction: "right" },
+      { type: "electricEel", row: 5, col: 7, direction: "left" },
+      { type: "diverDrone", row: 7, col: 10, direction: "left" },
+      { type: "puffer", row: 7, col: 5, direction: "right" },
+      { type: "puffer", row: 7, col: 13, direction: "left" },
+    ],
+  },
+  {
+    id: 9,
+    name: "Predator Maze",
+    theme: "predatorMaze",
+    enemySpeedModifier: 1,
+    goldenFish: { firstChumTrigger: 16, chumInterval: 30, durationMs: 7000 },
+    maze: [
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 3, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 3, 0],
+      [0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0],
+      [0, 0, 0, 2, 0, 2, 0, 2, 0, 0, 0, 0, 2, 0, 2, 0, 2, 0, 0],
+      [0, 2, 2, 2, 2, 2, 2, 1, 4, 1, 4, 1, 2, 2, 2, 2, 2, 2, 0],
+      [0, 0, 2, 0, 2, 0, 2, 0, 0, 0, 0, 2, 0, 2, 0, 2, 0, 0, 0],
+      [0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 0],
+      [0, 3, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 3, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    playerStart: { row: 13, col: 9 },
+    enemyStarts: [
+      { type: "dolphinPatrol", row: 7, col: 8, direction: "right" },
+      { type: "electricEel", row: 7, col: 10, direction: "left" },
+      { type: "diverDrone", row: 5, col: 17, direction: "left" },
+      { type: "diverDrone", row: 9, col: 1, direction: "right" },
+      { type: "dolphinPatrol", row: 9, col: 17, direction: "left" },
+    ],
+  },
+  {
+    id: 10,
+    name: "Apex Chomp Gauntlet",
+    theme: "apexGauntlet",
+    enemySpeedModifier: 1,
+    goldenFish: { firstChumTrigger: 18, chumInterval: 32, durationMs: 7000 },
+    maze: [
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 3, 2, 2, 2, 2, 2, 0, 2, 4, 2, 0, 2, 2, 2, 2, 2, 3, 0],
+      [0, 2, 0, 0, 0, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 0, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0],
+      [0, 0, 0, 2, 2, 2, 0, 0, 0, 2, 0, 0, 0, 2, 2, 2, 0, 0, 0],
+      [0, 2, 2, 1, 2, 1, 2, 1, 4, 1, 4, 1, 2, 1, 2, 1, 2, 2, 0],
+      [0, 0, 0, 2, 2, 2, 0, 0, 0, 2, 0, 0, 0, 2, 2, 2, 0, 0, 0],
+      [0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 0],
+      [0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 2, 0, 2, 0],
+      [0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0],
+      [0, 2, 0, 0, 0, 2, 2, 0, 2, 2, 2, 0, 2, 2, 2, 0, 0, 2, 0],
+      [0, 3, 2, 2, 2, 2, 2, 0, 2, 4, 2, 0, 2, 2, 2, 2, 2, 3, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    playerStart: { row: 13, col: 9 },
+    enemyStarts: [
+      { type: "dolphinPatrol", row: 7, col: 8, direction: "right" },
+      { type: "electricEel", row: 7, col: 10, direction: "left" },
+      { type: "diverDrone", row: 5, col: 5, direction: "right" },
+      { type: "puffer", row: 7, col: 5, direction: "right" },
+      { type: "puffer", row: 7, col: 13, direction: "left" },
+      { type: "diverDrone", row: 9, col: 17, direction: "left" },
+    ],
+  },
 ];
 
 let currentLevel = 1;
@@ -243,6 +496,7 @@ let score = 0;
 let highScore = loadHighScore();
 let lives = STARTING_LIVES;
 let remainingChum = countRemainingChum();
+let levelChumTotal = remainingChum;
 let debugMode = false;
 let levelClearReady = false;
 let isPaused = false;
@@ -261,6 +515,14 @@ let frenzyMode = {
   messageUntil: 0,
   messageType: "start",
   pulseUntil: 0,
+};
+let goldenFish = {
+  active: false,
+  row: null,
+  col: null,
+  spawnedAt: 0,
+  expiresAt: 0,
+  nextChumTrigger: GOLDEN_FISH_FIRST_CHUM_TRIGGER,
 };
 
 let playerStart = { ...currentLayout.playerStart };
@@ -525,6 +787,15 @@ function playSound(name) {
     } else if (name === "frenzyBait") {
       playTone(360, 0.11, { endFrequency: 920, type: "sawtooth", volume: 0.4, echoAmount: 0.52 });
       setTimeout(() => playTone(720, 0.1, { endFrequency: 1180, type: "triangle", volume: 0.32, echoAmount: 0.48 }), 70);
+    } else if (name === "bonusFish") {
+      [760, 980, 1320].forEach((frequency, index) => {
+        setTimeout(() => playTone(frequency, 0.08, {
+          endFrequency: frequency * 1.18,
+          type: "triangle",
+          volume: 0.3,
+          echoAmount: 0.42,
+        }), index * 55);
+      });
     } else if (name === "frenzyStart") {
       [280, 420, 650].forEach((frequency, index) => {
         setTimeout(() => playTone(frequency, 0.09, {
@@ -537,6 +808,9 @@ function playSound(name) {
       playNoise(0.08, { volume: 0.24, echoAmount: 0.25 });
       playTone(190, 0.08, { endFrequency: 95, type: "square", volume: 0.34, echoAmount: 0.3 });
       setTimeout(() => playTone(560, 0.07, { endFrequency: 840, type: "triangle", volume: 0.3, echoAmount: 0.35 }), 45);
+    } else if (name === "pufferInflate") {
+      playNoise(0.09, { volume: 0.12, echoAmount: 0.2 });
+      playTone(170, 0.16, { endFrequency: 280, type: "sine", volume: 0.2, echoAmount: 0.24 });
     } else if (name === "loseLife") {
       playTone(260, 0.22, { endFrequency: 110, type: "sawtooth", volume: 0.34, echoAmount: 0.38 });
     } else if (name === "levelClear") {
@@ -715,6 +989,10 @@ function startFrenzyMode() {
     if (enemy.state !== "returning") {
       enemy.state = "vulnerable";
       enemy.isVulnerable = true;
+
+      if (enemy.type === "puffer") {
+        resetPufferGuardCycle(enemy);
+      }
     }
   });
 
@@ -734,6 +1012,10 @@ function endFrenzyMode() {
     if (enemy.state !== "returning") {
       enemy.state = "normal";
       enemy.isVulnerable = false;
+
+      if (enemy.type === "puffer") {
+        resetPufferGuardCycle(enemy);
+      }
     }
   });
 
@@ -761,21 +1043,131 @@ function updateFrenzyMode() {
   updateFrenzyDisplay();
 }
 
+function clearGoldenFish() {
+  goldenFish.active = false;
+  goldenFish.row = null;
+  goldenFish.col = null;
+  goldenFish.spawnedAt = 0;
+  goldenFish.expiresAt = 0;
+}
+
+function resetGoldenFish() {
+  clearGoldenFish();
+  goldenFish.nextChumTrigger = getCurrentLevelGoldenFishSettings().firstChumTrigger;
+}
+
+function getCollectedChumCount() {
+  return levelChumTotal - remainingChum;
+}
+
+function isGoldenFishSpawnTile(row, col) {
+  const tile = maze[row][col];
+
+  if (tile !== TILE.PATH && tile !== TILE.EMPTY) {
+    return false;
+  }
+
+  if (player.row === row && player.col === col) {
+    return false;
+  }
+
+  return !enemies.some((enemy) => enemy.row === row && enemy.col === col);
+}
+
+function getGoldenFishSpawnTile() {
+  const spawnTiles = [];
+
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      if (isGoldenFishSpawnTile(row, col)) {
+        spawnTiles.push({ row, col });
+      }
+    }
+  }
+
+  if (spawnTiles.length === 0) {
+    return null;
+  }
+
+  return spawnTiles[Math.floor(Math.random() * spawnTiles.length)];
+}
+
+function maybeSpawnGoldenFish() {
+  const goldenFishSettings = getCurrentLevelGoldenFishSettings();
+
+  if (goldenFishSettings.enabled === false) {
+    return;
+  }
+
+  if (goldenFish.active || gameState !== GAME_STATE.PLAYING || remainingChum <= 0) {
+    return;
+  }
+
+  if (getCollectedChumCount() < goldenFish.nextChumTrigger) {
+    return;
+  }
+
+  const spawnTile = getGoldenFishSpawnTile();
+  goldenFish.nextChumTrigger += goldenFishSettings.chumInterval;
+
+  if (!spawnTile) {
+    return;
+  }
+
+  goldenFish.active = true;
+  goldenFish.row = spawnTile.row;
+  goldenFish.col = spawnTile.col;
+  goldenFish.spawnedAt = getGameTime();
+  goldenFish.expiresAt = goldenFish.spawnedAt + goldenFishSettings.durationMs;
+}
+
+function updateGoldenFish() {
+  if (!goldenFish.active) {
+    return;
+  }
+
+  if (getGameTime() >= goldenFish.expiresAt || gameState !== GAME_STATE.PLAYING) {
+    clearGoldenFish();
+  }
+}
+
+function getLevelCount() {
+  return LEVELS.length;
+}
+
+function isFinalLevel(levelNumber = currentLevel) {
+  return levelNumber >= getLevelCount();
+}
+
+function clampLevelNumber(levelNumber) {
+  return Math.min(Math.max(1, levelNumber), getLevelCount());
+}
+
 function getLevelConfig(levelNumber) {
-  const levelIndex = (levelNumber - 1) % LEVELS.length;
-  return LEVELS[levelIndex];
+  const levelIndex = levelNumber - 1;
+
+  if (LEVELS[levelIndex]) {
+    return LEVELS[levelIndex];
+  }
+
+  console.warn(`Level ${levelNumber} is not configured. Loading the first level instead.`);
+  return LEVELS[0];
+}
+
+function getCurrentLevelGoldenFishSettings() {
+  return {
+    ...DEFAULT_GOLDEN_FISH_SETTINGS,
+    ...(currentLayout.goldenFish || {}),
+  };
 }
 
 function getLevelEnemySpeed(type) {
   const baseSpeed = ENEMY_SPEEDS[type] || 1;
+  const speedModifier = currentLayout.enemySpeedModifier || 0;
 
-  // Enemy speed stays tile-safe: 1 and 2 both divide evenly into 32px tiles,
+  // Enemy speed stays tile-safe because these values divide evenly into 32px tiles,
   // so enemies still snap cleanly to corridor centers.
-  if (currentLevel >= 3) {
-    return Math.min(2, baseSpeed + 1);
-  }
-
-  return baseSpeed;
+  return Math.min(2, baseSpeed + speedModifier);
 }
 
 function getFrenzyDuration() {
@@ -792,15 +1184,17 @@ function isFrenzyEndingSoon() {
 }
 
 function loadLevel(levelNumber) {
-  currentLevel = levelNumber;
+  currentLevel = clampLevelNumber(levelNumber);
   currentLayout = getLevelConfig(currentLevel);
   maze = cloneMaze(currentLayout.maze);
   playerStart = { ...currentLayout.playerStart };
   enemyStarts = currentLayout.enemyStarts.map((enemyStart) => ({ ...enemyStart }));
   remainingChum = countRemainingChum();
+  levelChumTotal = remainingChum;
   levelClearReady = false;
   particles = [];
   lastSharkBubbleTime = 0;
+  resetGoldenFish();
   endFrenzyMode();
   resetPlayerPosition();
   rebuildEnemies();
@@ -820,6 +1214,7 @@ function resetGame() {
   particles = [];
   levelClearMessage = "";
   lastSharkBubbleTime = 0;
+  resetGoldenFish();
   loadLevel(currentLevel);
   gameState = GAME_STATE.PLAYING;
   updateStatusDisplay();
@@ -860,6 +1255,220 @@ function canMove(directionName) {
   const nextCol = player.col + direction.col;
 
   return isWalkable(nextRow, nextCol);
+}
+
+function isLevelTileInBounds(row, col) {
+  return row >= 0 && row < ROWS && col >= 0 && col < COLS;
+}
+
+function isPassableLevelTile(levelConfig, row, col) {
+  return (
+    isLevelTileInBounds(row, col) &&
+    Array.isArray(levelConfig.maze[row]) &&
+    levelConfig.maze[row][col] !== TILE.WALL
+  );
+}
+
+function describeLevel(levelConfig, levelIndex) {
+  return `Level ${levelConfig.id || levelIndex + 1}${levelConfig.name ? ` (${levelConfig.name})` : ""}`;
+}
+
+function validateLevelPoint(levelConfig, point, label, issues) {
+  if (!point || !Number.isInteger(point.row) || !Number.isInteger(point.col)) {
+    issues.push(`${label} must include integer row and col values.`);
+    return;
+  }
+
+  if (!isPassableLevelTile(levelConfig, point.row, point.col)) {
+    issues.push(`${label} must be on a passable tile at row ${point.row}, col ${point.col}.`);
+  }
+}
+
+function getReachableLevelTiles(levelConfig) {
+  const start = levelConfig.playerStart;
+
+  if (!start || !isPassableLevelTile(levelConfig, start.row, start.col)) {
+    return new Set();
+  }
+
+  const visited = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  const queue = [{ row: start.row, col: start.col }];
+  const reachableTiles = new Set([`${start.row},${start.col}`]);
+  visited[start.row][start.col] = true;
+
+  while (queue.length > 0) {
+    const tile = queue.shift();
+
+    Object.values(DIRECTIONS).forEach((direction) => {
+      const nextRow = tile.row + direction.row;
+      const nextCol = tile.col + direction.col;
+
+      if (
+        isLevelTileInBounds(nextRow, nextCol) &&
+        !visited[nextRow][nextCol] &&
+        isPassableLevelTile(levelConfig, nextRow, nextCol)
+      ) {
+        visited[nextRow][nextCol] = true;
+        reachableTiles.add(`${nextRow},${nextCol}`);
+        queue.push({ row: nextRow, col: nextCol });
+      }
+    });
+  }
+
+  return reachableTiles;
+}
+
+function getLevelCollectibleCounts(levelConfig) {
+  let chum = 0;
+  let frenzyBait = 0;
+
+  if (!Array.isArray(levelConfig.maze)) {
+    return { chum, frenzyBait };
+  }
+
+  levelConfig.maze.forEach((row) => {
+    if (!Array.isArray(row)) {
+      return;
+    }
+
+    row.forEach((tile) => {
+      if (tile === TILE.CHUM) {
+        chum += 1;
+      }
+
+      if (tile === TILE.FRENZY_BAIT) {
+        frenzyBait += 1;
+      }
+    });
+  });
+
+  return { chum, frenzyBait };
+}
+
+function validateLevelConfig(levelConfig, levelIndex) {
+  const issues = [];
+  const warnings = [];
+  const levelLabel = describeLevel(levelConfig, levelIndex);
+  const reachableTiles = getReachableLevelTiles(levelConfig);
+
+  if (!Array.isArray(levelConfig.maze) || levelConfig.maze.length !== ROWS) {
+    issues.push(`Maze must contain ${ROWS} rows.`);
+  }
+
+  if (Array.isArray(levelConfig.maze)) {
+    levelConfig.maze.forEach((row, rowIndex) => {
+      if (!Array.isArray(row) || row.length !== COLS) {
+        issues.push(`Maze row ${rowIndex} must contain ${COLS} columns.`);
+      }
+    });
+  }
+
+  validateLevelPoint(levelConfig, levelConfig.playerStart, "Player start", issues);
+
+  if (!Array.isArray(levelConfig.enemyStarts)) {
+    issues.push("enemyStarts must be an array.");
+  } else {
+    levelConfig.enemyStarts.forEach((enemyStart, enemyIndex) => {
+      const enemyLabel = `Enemy ${enemyIndex + 1}`;
+
+      if (!VALID_ENEMY_TYPES.includes(enemyStart.type)) {
+        issues.push(`${enemyLabel} has unknown type "${enemyStart.type}".`);
+      }
+
+      if (!DIRECTIONS[enemyStart.direction]) {
+        issues.push(`${enemyLabel} must use a valid start direction.`);
+      }
+
+      validateLevelPoint(levelConfig, enemyStart, enemyLabel, issues);
+
+      if (
+        isLevelTileInBounds(enemyStart.row, enemyStart.col) &&
+        levelConfig.maze[enemyStart.row][enemyStart.col] === TILE.FRENZY_BAIT
+      ) {
+        issues.push(`${enemyLabel} must not start on Frenzy Bait.`);
+      }
+    });
+  }
+
+  const unreachableCollectibles = [];
+  const inaccessiblePassages = [];
+
+  if (Array.isArray(levelConfig.maze)) {
+    levelConfig.maze.forEach((row, rowIndex) => {
+      if (!Array.isArray(row)) {
+        return;
+      }
+
+      row.forEach((tile, colIndex) => {
+        const tileKey = `${rowIndex},${colIndex}`;
+
+        if ((tile === TILE.CHUM || tile === TILE.FRENZY_BAIT) && !reachableTiles.has(tileKey)) {
+          unreachableCollectibles.push(`row ${rowIndex}, col ${colIndex}`);
+        }
+
+        if (tile !== TILE.WALL && !reachableTiles.has(tileKey)) {
+          inaccessiblePassages.push(`row ${rowIndex}, col ${colIndex}`);
+        }
+      });
+    });
+  }
+
+  if (unreachableCollectibles.length > 0) {
+    issues.push(`Unreachable collectibles at ${unreachableCollectibles.join("; ")}.`);
+  }
+
+  if (inaccessiblePassages.length > 0) {
+    issues.push(`Inaccessible passable tiles at ${inaccessiblePassages.join("; ")}.`);
+  }
+
+  const collectibleCounts = getLevelCollectibleCounts(levelConfig);
+
+  if (collectibleCounts.chum <= 0) {
+    issues.push("Level must include at least one chum tile.");
+  }
+
+  if (collectibleCounts.frenzyBait <= 0) {
+    warnings.push("Level has no Frenzy Bait.");
+  }
+
+  const goldenFishSettings = {
+    ...DEFAULT_GOLDEN_FISH_SETTINGS,
+    ...(levelConfig.goldenFish || {}),
+  };
+
+  if (goldenFishSettings.enabled !== false) {
+    ["firstChumTrigger", "chumInterval", "durationMs"].forEach((settingName) => {
+      if (!Number.isFinite(goldenFishSettings[settingName]) || goldenFishSettings[settingName] <= 0) {
+        warnings.push(`Golden Fish setting "${settingName}" should be a positive number.`);
+      }
+    });
+  }
+
+  return { levelLabel, issues, warnings };
+}
+
+function validateConfiguredLevels(levels = LEVELS) {
+  if (levels.length > MAX_PLANNED_LEVELS) {
+    console.warn(`CHOMP has ${levels.length} configured levels. The current roadmap target is ${MAX_PLANNED_LEVELS}.`);
+  }
+
+  const results = levels.map(validateLevelConfig);
+
+  results.forEach((result) => {
+    result.issues.forEach((issue) => {
+      console.error(`${result.levelLabel}: ${issue}`);
+    });
+
+    result.warnings.forEach((warning) => {
+      console.warn(`${result.levelLabel}: ${warning}`);
+    });
+  });
+
+  if (results.every((result) => result.issues.length === 0 && result.warnings.length === 0)) {
+    console.info(`CHOMP level validation passed for ${levels.length} configured levels.`);
+  }
+
+  return results;
 }
 
 function updatePlayerTile() {
@@ -925,6 +1534,7 @@ function collectTile() {
     playSound("chum");
     spawnChumParticles(player.x, player.y);
     updateScore(SCORE_VALUES.CHUM);
+    maybeSpawnGoldenFish();
     checkLevelClear();
     return;
   }
@@ -937,6 +1547,18 @@ function collectTile() {
     updateScore(SCORE_VALUES.FRENZY_BAIT);
     startFrenzyMode();
   }
+}
+
+function collectGoldenFish() {
+  if (!goldenFish.active || goldenFish.row !== player.row || goldenFish.col !== player.col) {
+    return;
+  }
+
+  clearGoldenFish();
+  triggerSharkChomp();
+  playSound("bonusFish");
+  spawnGoldenFishParticles(player.x, player.y);
+  updateScore(SCORE_VALUES.GOLDEN_FISH);
 }
 
 function checkLevelClear() {
@@ -954,6 +1576,7 @@ function startLevelClear() {
   updateScore(LEVEL_CLEAR_BONUS * currentLevel);
   playSound("levelClear");
   spawnLevelClearParticles();
+  clearGoldenFish();
   endFrenzyMode();
   updateStatusDisplay();
 }
@@ -963,7 +1586,7 @@ function advanceToNextLevel() {
     return;
   }
 
-  if (currentLevel >= TOTAL_LEVELS) {
+  if (isFinalLevel()) {
     startWin();
     return;
   }
@@ -975,6 +1598,7 @@ function advanceToNextLevel() {
 function startWin() {
   gameState = GAME_STATE.WIN;
   levelClearReady = false;
+  resetGoldenFish();
   endFrenzyMode();
   resetPlayerPosition();
   resetEnemies();
@@ -991,6 +1615,7 @@ function movePlayer() {
     snapPlayerToTileCenter();
     updatePlayerTile();
     collectTile();
+    collectGoldenFish();
 
     if (gameState !== GAME_STATE.PLAYING) {
       return;
@@ -1017,14 +1642,23 @@ function movePlayer() {
   updatePlayerTile();
 }
 
+function getPufferInflateDelay(row, col) {
+  return PUFFER_INFLATE_INTERVAL_MS + ((row + col) % 4) * 300;
+}
+
+function resetPufferGuardCycle(enemy, delay = getPufferInflateDelay(enemy.startRow, enemy.startCol)) {
+  enemy.pufferState = "normal";
+  enemy.pufferStateUntil = 0;
+  enemy.pufferNextInflateAt = getGameTime() + delay;
+}
+
 function createEnemy(type, row, col, direction) {
   if (!isWalkable(row, col)) {
     throw new Error(`${type} cannot spawn inside a wall at row ${row}, col ${col}.`);
   }
 
   const center = getTileCenter(row, col);
-
-  return {
+  const enemy = {
     x: center.x,
     y: center.y,
     row,
@@ -1039,6 +1673,12 @@ function createEnemy(type, row, col, direction) {
     startCol: col,
     startDirection: direction,
   };
+
+  if (type === "puffer") {
+    resetPufferGuardCycle(enemy);
+  }
+
+  return enemy;
 }
 
 function getValidDirections(row, col) {
@@ -1147,6 +1787,59 @@ function chooseEnemyDirection(enemy) {
   return chooseDolphinDirection(enemy, validDirections);
 }
 
+function startPufferInflating(enemy) {
+  enemy.pufferState = "inflating";
+  enemy.pufferStateUntil = getGameTime() + PUFFER_INFLATING_MS;
+  playSound("pufferInflate");
+  spawnPufferInflateParticles(enemy.x, enemy.y);
+}
+
+function updatePufferGuard(enemy) {
+  if (enemy.type !== "puffer") {
+    return;
+  }
+
+  if (enemy.isVulnerable || enemy.state === "returning") {
+    resetPufferGuardCycle(enemy);
+    return;
+  }
+
+  const now = getGameTime();
+
+  if (enemy.pufferState === "normal") {
+    if (now >= enemy.pufferNextInflateAt && isEntityCenteredOnTile(enemy)) {
+      snapEntityToTileCenter(enemy);
+      startPufferInflating(enemy);
+    }
+
+    return;
+  }
+
+  if (now < enemy.pufferStateUntil) {
+    return;
+  }
+
+  if (enemy.pufferState === "inflating") {
+    enemy.pufferState = "inflated";
+    enemy.pufferStateUntil = now + PUFFER_INFLATED_MS;
+    return;
+  }
+
+  if (enemy.pufferState === "inflated") {
+    enemy.pufferState = "deflating";
+    enemy.pufferStateUntil = now + PUFFER_DEFLATING_MS;
+    return;
+  }
+
+  enemy.pufferState = "normal";
+  enemy.pufferStateUntil = 0;
+  enemy.pufferNextInflateAt = now + PUFFER_INFLATE_INTERVAL_MS;
+}
+
+function isPufferGuardPaused(enemy) {
+  return enemy.type === "puffer" && enemy.pufferState !== "normal";
+}
+
 function updateEnemies() {
   if (debugMode) {
     return;
@@ -1163,6 +1856,11 @@ function updateEnemies() {
     }
 
     updateEnemyTile(enemy);
+    updatePufferGuard(enemy);
+
+    if (isPufferGuardPaused(enemy)) {
+      return;
+    }
 
     // Like the shark, enemies make turns only at tile centers. They reuse the
     // same walkable-tile checks so they cannot swim through reef walls. The
@@ -1197,6 +1895,10 @@ function resetEnemyPosition(enemy) {
   enemy.state = "normal";
   enemy.isVulnerable = false;
   enemy.returnUntil = 0;
+
+  if (enemy.type === "puffer") {
+    resetPufferGuardCycle(enemy);
+  }
 }
 
 function rebuildEnemies() {
@@ -1209,8 +1911,40 @@ function resetEnemies() {
   enemies.forEach(resetEnemyPosition);
 }
 
+function getPufferInflationAmount(enemy) {
+  if (enemy.type !== "puffer" || enemy.isVulnerable || enemy.state === "returning") {
+    return 0;
+  }
+
+  const now = getGameTime();
+
+  if (enemy.pufferState === "inflating") {
+    return Math.min(1, 1 - ((enemy.pufferStateUntil - now) / PUFFER_INFLATING_MS));
+  }
+
+  if (enemy.pufferState === "inflated") {
+    return 1;
+  }
+
+  if (enemy.pufferState === "deflating") {
+    return Math.max(0, (enemy.pufferStateUntil - now) / PUFFER_DEFLATING_MS);
+  }
+
+  return 0;
+}
+
+function getEnemyHitDistance(enemy) {
+  if (enemy.type !== "puffer") {
+    return PLAYER_HIT_DISTANCE;
+  }
+
+  const inflationAmount = getPufferInflationAmount(enemy);
+  return PLAYER_HIT_DISTANCE + (PUFFER_INFLATED_HIT_DISTANCE - PLAYER_HIT_DISTANCE) * inflationAmount;
+}
+
 function loseLife() {
   endFrenzyMode();
+  clearGoldenFish();
   lives -= 1;
   playSound("loseLife");
   updateScoreDisplay();
@@ -1220,6 +1954,7 @@ function loseLife() {
 
   if (lives <= 0) {
     lives = 0;
+    resetGoldenFish();
     updateStatusDisplay();
     gameState = GAME_STATE.GAME_OVER;
     updatePauseButton();
@@ -1238,7 +1973,7 @@ function checkPlayerEnemyCollision() {
     const distance = Math.hypot(player.x - enemy.x, player.y - enemy.y);
 
     // A simple circle-distance check is enough for these cartoon shapes.
-    if (distance < PLAYER_HIT_DISTANCE) {
+    if (distance < getEnemyHitDistance(enemy)) {
       handleEnemyCollision(enemy);
       return;
     }
@@ -1261,6 +1996,10 @@ function sendEnemyToSpawn(enemy) {
   enemy.state = "returning";
   enemy.isVulnerable = false;
   enemy.returnUntil = getGameTime() + ENEMY_RETURN_MS;
+
+  if (enemy.type === "puffer") {
+    resetPufferGuardCycle(enemy, PUFFER_INFLATE_INTERVAL_MS);
+  }
 }
 
 function handleEnemyCollision(enemy) {
@@ -1374,6 +2113,36 @@ function spawnFrenzyParticles(x, y) {
   });
 }
 
+function spawnGoldenFishParticles(x, y) {
+  spawnBurst(x, y, 16, ["#ffcf5c", "#fff4a8", "#ff9f1c"], {
+    minSpeed: 20,
+    speedRange: 38,
+    minSize: 2,
+    sizeRange: 2.8,
+    duration: 620,
+  });
+
+  addParticle({
+    type: "ring",
+    x,
+    y,
+    size: 10,
+    duration: 520,
+    color: "rgba(255, 207, 92, 0.92)",
+  });
+
+  addParticle({
+    type: "text",
+    x,
+    y: y - 12,
+    vx: 0,
+    vy: -36,
+    duration: 820,
+    color: "#ffcf5c",
+    text: `+${SCORE_VALUES.GOLDEN_FISH}`,
+  });
+}
+
 function spawnLevelClearParticles() {
   for (let i = 0; i < 34; i += 1) {
     addParticle({
@@ -1416,6 +2185,25 @@ function spawnEnemyChompEffect(x, y, chompScore) {
     duration: 760,
     color: "#ffcf5c",
     text: `+${chompScore}`,
+  });
+}
+
+function spawnPufferInflateParticles(x, y) {
+  spawnBurst(x, y, 12, ["rgba(217, 251, 255, 0.82)", "rgba(255, 207, 92, 0.68)"], {
+    minSpeed: 10,
+    speedRange: 22,
+    minSize: 2,
+    sizeRange: 3,
+    duration: 520,
+  });
+
+  addParticle({
+    type: "ring",
+    x,
+    y,
+    size: 7,
+    duration: 430,
+    color: "rgba(217, 251, 255, 0.68)",
   });
 }
 
@@ -1697,6 +2485,69 @@ function drawFrenzyBait(x, y) {
   ctx.restore();
 }
 
+function drawGoldenFish() {
+  if (!goldenFish.active) {
+    return;
+  }
+
+  const center = getTileCenter(goldenFish.row, goldenFish.col);
+  const now = getGameTime();
+  const pulse = Math.sin(now / 160);
+  const tailWave = Math.sin(now / 90) * 2.5;
+  const sparkleAlpha = 0.45 + (pulse + 1) * 0.2;
+
+  ctx.save();
+  ctx.translate(center.x, center.y);
+  ctx.shadowColor = "rgba(255, 207, 92, 0.9)";
+  ctx.shadowBlur = 12 + pulse * 3;
+
+  ctx.fillStyle = "#ffcf5c";
+  ctx.strokeStyle = "#fff4a8";
+  ctx.lineWidth = 1.8;
+
+  ctx.beginPath();
+  ctx.moveTo(-12, 0);
+  ctx.lineTo(-21, -7 - tailWave * 0.25);
+  ctx.lineTo(-18, 0);
+  ctx.lineTo(-21, 7 + tailWave * 0.25);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  const bodyGradient = ctx.createLinearGradient(-12, -8, 13, 8);
+  bodyGradient.addColorStop(0, "#fff4a8");
+  bodyGradient.addColorStop(0.42, "#ffcf5c");
+  bodyGradient.addColorStop(1, "#ff9f1c");
+
+  ctx.fillStyle = bodyGradient;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 14, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#08283d";
+  ctx.beginPath();
+  ctx.arc(8, -2.5, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = sparkleAlpha;
+  ctx.strokeStyle = "#fff4a8";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(0, -15);
+  ctx.lineTo(0, -9);
+  ctx.moveTo(-3, -12);
+  ctx.lineTo(3, -12);
+  ctx.moveTo(15, 8);
+  ctx.lineTo(15, 13);
+  ctx.moveTo(12.5, 10.5);
+  ctx.lineTo(17.5, 10.5);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
 function drawCollectibles() {
   for (let row = 0; row < ROWS; row += 1) {
     for (let col = 0; col < COLS; col += 1) {
@@ -1713,6 +2564,8 @@ function drawCollectibles() {
       }
     }
   }
+
+  drawGoldenFish();
 }
 
 function getSharkChompAmount() {
@@ -2379,6 +3232,112 @@ function drawDiverDrone(enemy) {
   ctx.restore();
 }
 
+function drawPufferGuard(enemy) {
+  const direction = DIRECTIONS[enemy.direction || enemy.startDirection];
+  const isVulnerable = enemy.state === "vulnerable";
+  const isReturning = enemy.state === "returning";
+  const inflationAmount = getPufferInflationAmount(enemy);
+  const now = getGameTime();
+  const bob = Math.sin(now / 230 + enemy.startRow) * 1.1;
+  const bodyRadius = 12 + inflationAmount * 7;
+  const spikeLength = 3 + inflationAmount * 5;
+  const bodyColor = isVulnerable ? "#8d9aa9" : "#ffd65c";
+  const bellyColor = isVulnerable ? "#d8e0ea" : "#fff1a6";
+  const finColor = isVulnerable ? "#c3cedd" : "#ff9f3d";
+  const strokeColor = isVulnerable ? "#eef4ff" : "#fff4bd";
+
+  ctx.save();
+  ctx.translate(enemy.x, enemy.y + bob);
+  ctx.rotate(direction.angle);
+  ctx.globalAlpha = isReturning ? 0.55 : 1;
+  ctx.shadowColor = isVulnerable ? "rgba(217, 251, 255, 0.65)" : "rgba(255, 207, 92, 0.72)";
+  ctx.shadowBlur = isVulnerable ? 12 : 8 + inflationAmount * 8;
+
+  if (isVulnerable) {
+    drawVulnerableEnemyEffect(bodyRadius + 5);
+  }
+
+  if (inflationAmount > 0.15 && !isVulnerable) {
+    ctx.fillStyle = "#fff4bd";
+    ctx.strokeStyle = "#946122";
+    ctx.lineWidth = 1.3;
+
+    for (let spikeIndex = 0; spikeIndex < 12; spikeIndex += 1) {
+      const angle = (Math.PI * 2 * spikeIndex) / 12;
+      const baseLeft = angle - 0.13;
+      const baseRight = angle + 0.13;
+      const innerRadius = bodyRadius - 1;
+      const outerRadius = bodyRadius + spikeLength;
+
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(baseLeft) * innerRadius, Math.sin(baseLeft) * innerRadius);
+      ctx.lineTo(Math.cos(angle) * outerRadius, Math.sin(angle) * outerRadius);
+      ctx.lineTo(Math.cos(baseRight) * innerRadius, Math.sin(baseRight) * innerRadius);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  ctx.fillStyle = finColor;
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 1.8;
+
+  ctx.beginPath();
+  ctx.moveTo(-bodyRadius + 1, -4);
+  ctx.lineTo(-bodyRadius - 10, -9);
+  ctx.lineTo(-bodyRadius - 8, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(-bodyRadius + 1, 4);
+  ctx.lineTo(-bodyRadius - 10, 9);
+  ctx.lineTo(-bodyRadius - 8, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  const bodyGradient = ctx.createRadialGradient(-4, -5, 3, 0, 0, bodyRadius + 4);
+  bodyGradient.addColorStop(0, bellyColor);
+  bodyGradient.addColorStop(0.46, bodyColor);
+  bodyGradient.addColorStop(1, isVulnerable ? "#64748a" : "#c7782b");
+
+  ctx.fillStyle = bodyGradient;
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, bodyRadius + inflationAmount * 1.5, bodyRadius, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = bellyColor;
+  ctx.beginPath();
+  ctx.ellipse(1, 5, bodyRadius * 0.62, bodyRadius * 0.36, 0.08, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#f8fdff";
+  ctx.beginPath();
+  ctx.arc(bodyRadius * 0.35, -bodyRadius * 0.36, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#08283d";
+  ctx.beginPath();
+  ctx.arc(bodyRadius * 0.43, -bodyRadius * 0.36, 1.45, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = isVulnerable ? "#eef4ff" : "#7a4b1b";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(bodyRadius * 0.38, bodyRadius * 0.18);
+  ctx.quadraticCurveTo(bodyRadius * 0.56, bodyRadius * 0.3, bodyRadius * 0.72, bodyRadius * 0.12);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
 function drawEnemies() {
   if (debugMode) {
     return;
@@ -2395,6 +3354,10 @@ function drawEnemies() {
 
     if (enemy.type === "diverDrone") {
       drawDiverDrone(enemy);
+    }
+
+    if (enemy.type === "puffer") {
+      drawPufferGuard(enemy);
     }
   });
 }
@@ -2780,7 +3743,7 @@ function drawWinScreen() {
     statLines: [
       `Final Score: ${score}`,
       `High Score: ${highScore}`,
-      `Final Level Completed: ${TOTAL_LEVELS}`,
+      `Final Level Completed: ${getLevelCount()}`,
     ],
     action: "Press Space or Tap to Play Again",
     titleColor: "#ffcf5c",
@@ -2826,6 +3789,7 @@ function gameLoop() {
 
   if (gameState === GAME_STATE.PLAYING && !isPaused) {
     updateFrenzyMode();
+    updateGoldenFish();
     movePlayer();
     updateEnemies();
     checkPlayerEnemyCollision();
@@ -2949,6 +3913,7 @@ canvas.addEventListener("touchcancel", () => {
 window.addEventListener("resize", resizeCanvasDisplay);
 window.addEventListener("orientationchange", resizeCanvasDisplay);
 
+validateConfiguredLevels();
 updateStatusDisplay();
 updateFrenzyDisplay();
 updateSoundButton();
