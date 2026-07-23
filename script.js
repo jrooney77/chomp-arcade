@@ -141,7 +141,6 @@ const AUDIO_ASSETS = {
     loop: false,
   },
 };
-const AUDIO_STATUS_FONT = "bold 12px Trebuchet MS, Lucida Console, monospace";
 const REVERB_ENABLED = true;
 const REVERB_DELAY_SECONDS = 0.12;
 const REVERB_FEEDBACK = 0.22;
@@ -1965,7 +1964,6 @@ let pendingVictoryMusicPlayback = false;
 let mediaAudioTracks = {};
 let lastMediaFrenzyPlaybackRate = 1;
 let lastMediaFrenzyRateUpdateTime = 0;
-let lastAudioError = "";
 
 function saveSoundMuted() {
   try {
@@ -1998,60 +1996,16 @@ function getMediaElementErrorDetails(mediaElement) {
   };
 }
 
-function noteAudioError(message, error = null) {
-  lastAudioError = error && error.message ? `${message}: ${error.message}` : message;
-}
-
-function getAudioBytesPreview(arrayBuffer, byteCount = 40) {
-  if (!arrayBuffer) {
-    return "";
-  }
-
-  const bytes = new Uint8Array(arrayBuffer.slice(0, byteCount));
-
-  return Array.from(bytes)
-    .map((byte) => (byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "."))
-    .join("");
-}
-
-function hasWavSignature(arrayBuffer) {
-  if (!arrayBuffer || arrayBuffer.byteLength < 12) {
-    return false;
-  }
-
-  const bytes = new Uint8Array(arrayBuffer.slice(0, 12));
-  const riff = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
-  const wave = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
-
-  return riff === "RIFF" && wave === "WAVE";
-}
-
-function getAudioResponseDetails(path, request) {
-  const arrayBuffer = request.response;
-
-  return {
-    path,
-    status: request.status,
-    contentType: request.getResponseHeader("Content-Type") || "unavailable",
-    contentLength: request.getResponseHeader("Content-Length") || "unavailable",
-    byteLength: arrayBuffer ? arrayBuffer.byteLength : 0,
-    first40BytesText: getAudioBytesPreview(arrayBuffer),
-    hasRiffWaveSignature: hasWavSignature(arrayBuffer),
-  };
-}
-
 function resumeAudioContext() {
   if (!audioContext) {
     return Promise.resolve(false);
   }
 
   if (audioContext.state === "running") {
-    console.info("[CHOMP audio] AudioContext resume result", { state: audioContext.state, didResume: true });
     return Promise.resolve(true);
   }
 
   if (audioContext.state !== "suspended") {
-    noteAudioError(`AudioContext cannot resume from state ${audioContext.state}`);
     console.warn("[CHOMP audio] AudioContext resume failed.", { state: audioContext.state });
     return Promise.resolve(false);
   }
@@ -2060,16 +2014,13 @@ function resumeAudioContext() {
     .then(() => {
       const didResume = audioContext.state === "running";
 
-      console.info("[CHOMP audio] AudioContext resume result", { state: audioContext.state, didResume });
-
       if (!didResume) {
-        noteAudioError(`AudioContext resume left state ${audioContext.state}`);
+        console.warn("[CHOMP audio] AudioContext resume left it unavailable.", { state: audioContext.state });
       }
 
       return didResume;
     })
     .catch((error) => {
-      noteAudioError("AudioContext resume failed", error);
       console.warn("[CHOMP audio] AudioContext resume failed.", error);
       return false;
     });
@@ -2106,13 +2057,12 @@ function ensureAudioContext() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
 
     if (!AudioContextClass) {
-      noteAudioError("Web Audio API is unavailable");
+      console.warn("[CHOMP audio] Web Audio API is unavailable.");
       return false;
     }
 
     if (!audioContext) {
       audioContext = new AudioContextClass();
-      console.info("[CHOMP audio] AudioContext created", { state: audioContext.state });
     }
 
     if (!masterGain) {
@@ -2131,7 +2081,6 @@ function ensureAudioContext() {
 
     return true;
   } catch (error) {
-    noteAudioError("AudioContext initialization failed", error);
     console.warn("[CHOMP audio] AudioContext initialization failed.", error);
     return false;
   }
@@ -2184,24 +2133,19 @@ function loadAudioArrayBuffer(path, onStatus = null) {
       const status = request.status;
       const ok = (status >= 200 && status < 300) || (status === 0 && request.response);
       const bytes = request.response ? request.response.byteLength : 0;
-      const responseDetails = getAudioResponseDetails(path, request);
 
       if (onStatus) {
         onStatus({ path, status, ok, bytes });
       }
 
       if (!ok) {
-        noteAudioError(`${path} returned HTTP ${status}`);
-        console.warn("[CHOMP audio] WAV fetch failure", responseDetails);
+        console.warn("[CHOMP audio] WAV fetch failure", {
+          path,
+          status,
+          contentType: request.getResponseHeader("Content-Type") || "unavailable",
+        });
         reject(new Error(`${path} returned HTTP ${status}`));
         return;
-      }
-
-      console.info("[CHOMP audio] WAV fetch success", responseDetails);
-
-      if (!responseDetails.hasRiffWaveSignature) {
-        noteAudioError(`${path} response is not RIFF/WAVE audio`);
-        console.warn("[CHOMP audio] WAV signature check failed", responseDetails);
       }
 
       resolve(request.response);
@@ -2212,7 +2156,6 @@ function loadAudioArrayBuffer(path, onStatus = null) {
         onStatus({ path, status: request.status, ok: false, error: "network error" });
       }
 
-      noteAudioError(`${path} failed to load`);
       console.warn("[CHOMP audio] WAV fetch failure", { path, status: request.status });
       reject(new Error(`${path} failed to load with XMLHttpRequest.`));
     };
@@ -2222,7 +2165,6 @@ function loadAudioArrayBuffer(path, onStatus = null) {
         onStatus({ path, status: request.status, ok: false, error: "aborted" });
       }
 
-      noteAudioError(`${path} load aborted`);
       console.warn("[CHOMP audio] WAV fetch failure", { path, status: request.status, aborted: true });
       reject(new Error(`${path} load was aborted.`));
     };
@@ -2260,16 +2202,7 @@ function loadAudioBuffers() {
   audioLoadPromise = Promise.all(Object.entries(AUDIO_ASSETS).map(([key, asset]) => {
     return loadAudioArrayBuffer(asset.path)
       .then((arrayBuffer) => decodeAudioArrayBuffer(arrayBuffer)
-        .then((audioBuffer) => {
-          console.info("[CHOMP audio] WAV decode success", {
-            key,
-            path: asset.path,
-            duration: `${audioBuffer.duration.toFixed(2)}s`,
-          });
-          return audioBuffer;
-        })
         .catch((error) => {
-          noteAudioError(`${asset.path} decode failed`, error);
           console.warn("[CHOMP audio] WAV decode failure", { key, path: asset.path, error });
           throw error;
         }))
@@ -2427,18 +2360,9 @@ function playMediaAudioTrack(trackKey, options = {}) {
   const playPromise = track.element.play();
 
   if (playPromise && typeof playPromise.catch === "function") {
-    playPromise
-      .then(() => {
-        console.info("[CHOMP audio] Source start success", {
-          key: trackKey,
-          path: AUDIO_ASSETS[trackKey].path,
-          source: "mediaElement",
-        });
-      })
-      .catch((error) => {
-        noteAudioError(`${AUDIO_ASSETS[trackKey].path} media playback failed`, error);
-        console.warn(`[CHOMP audio] Media fallback could not play ${AUDIO_ASSETS[trackKey].path}.`, error);
-      });
+    playPromise.catch((error) => {
+      console.warn(`[CHOMP audio] Media fallback could not play ${AUDIO_ASSETS[trackKey].path}.`, error);
+    });
   }
 
   return track;
@@ -2537,9 +2461,7 @@ function ensureLoopingSource(trackKey) {
   try {
     stopMediaAudioTrack(trackKey, 0, true);
     source.start();
-    console.info("[CHOMP audio] Source start success", { key: trackKey, path: asset.path });
   } catch (error) {
-    noteAudioError(`${asset.path} source start failed`, error);
     console.warn("[CHOMP audio] Source start failure", { key: trackKey, path: asset.path, error });
   }
 
@@ -2751,9 +2673,7 @@ function playDeathSound() {
 
   try {
     source.start();
-    console.info("[CHOMP audio] Source start success", { key: "death", path: AUDIO_ASSETS.death.path });
   } catch (error) {
-    noteAudioError(`${AUDIO_ASSETS.death.path} source start failed`, error);
     console.warn("[CHOMP audio] Source start failure", { key: "death", path: AUDIO_ASSETS.death.path, error });
   }
 }
@@ -2840,9 +2760,7 @@ function playVictoryMusic() {
 
   try {
     source.start();
-    console.info("[CHOMP audio] Source start success", { key: "victory", path: AUDIO_ASSETS.victory.path });
   } catch (error) {
-    noteAudioError(`${AUDIO_ASSETS.victory.path} source start failed`, error);
     console.warn("[CHOMP audio] Source start failure", { key: "victory", path: AUDIO_ASSETS.victory.path, error });
   }
 }
@@ -5369,46 +5287,6 @@ function drawPlayerShark() {
   ctx.restore();
 }
 
-function getAudioStatusLines() {
-  const hasAudioContext = Boolean(audioContext);
-  const masterGainValue = masterGain ? masterGain.gain.value.toFixed(2) : "n/a";
-  const audioState = audioContext ? audioContext.state : "none";
-  const mainBufferLoaded = Boolean(loadedAudioBuffers.main);
-  const deathBufferLoaded = Boolean(loadedAudioBuffers.death);
-  const mainSourceStarted = Boolean(loadedAudioBuffers.main && mainMusicSource);
-  const errorText = lastAudioError || "none";
-
-  return [
-    `AudioContext created: ${hasAudioContext ? "yes" : "no"} | state: ${audioState} | audioUnlocked: ${audioUnlocked ? "yes" : "no"} | muted: ${isSoundMuted ? "yes" : "no"} | masterGain: ${masterGainValue}`,
-    `main buffer loaded: ${mainBufferLoaded ? "yes" : "no"} | death buffer loaded: ${deathBufferLoaded ? "yes" : "no"} | main source started: ${mainSourceStarted ? "yes" : "no"} | last audio error: ${errorText}`,
-  ];
-}
-
-function drawAudioStatusLine() {
-  const lines = getAudioStatusLines();
-  const x = 10;
-  const y = canvas.height - 34;
-  const lineHeight = 15;
-  const panelWidth = canvas.width - 20;
-  const panelHeight = 32;
-
-  ctx.save();
-  ctx.globalAlpha = 0.88;
-  ctx.fillStyle = "rgba(3, 17, 31, 0.78)";
-  ctx.fillRect(x - 4, y - 11, panelWidth, panelHeight);
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = "#d9fbff";
-  ctx.font = AUDIO_STATUS_FONT;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-
-  lines.forEach((line, index) => {
-    ctx.fillText(line.slice(0, 118), x, y + index * lineHeight);
-  });
-
-  ctx.restore();
-}
-
 function drawAnimatedDolphin(enemy) {
   const direction = DIRECTIONS[enemy.direction || enemy.startDirection];
   const isVulnerable = enemy.state === "vulnerable";
@@ -6405,8 +6283,6 @@ function gameLoop() {
     drawWinScreen();
     drawParticles();
   }
-
-  drawAudioStatusLine();
 
   requestAnimationFrame(gameLoop);
 }
