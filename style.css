@@ -179,26 +179,6 @@ body::before {
   text-shadow: none;
 }
 
-.audio-diagnostic {
-  display: none;
-  width: min(100%, 760px);
-  max-height: 140px;
-  margin: 0 auto clamp(8px, 1.5vh, 12px);
-  padding: 8px 10px;
-  overflow: auto;
-  color: var(--foam);
-  text-align: left;
-  white-space: pre-wrap;
-  background: rgba(3, 17, 31, 0.88);
-  border: 1px solid rgba(255, 207, 92, 0.82);
-  border-radius: 6px;
-  box-shadow: 0 0 14px rgba(255, 207, 92, 0.2);
-}
-
-.audio-diagnostic.has-output {
-  display: block;
-}
-
 #frenzyValue {
   color: #ffcf5c;
 }

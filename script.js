@@ -16,9 +16,6 @@ const gameHudElement = document.querySelector(".game-hud");
 const gameControlsElement = document.querySelector(".game-controls");
 const pauseButtonElement = document.getElementById("pauseButton");
 const soundButtonElement = document.getElementById("soundButton");
-const testAudioButtonElement = document.getElementById("testAudioButton");
-const testMainWavButtonElement = document.getElementById("testMainWavButton");
-const audioDiagnosticOutputElement = document.getElementById("audioDiagnosticOutput");
 
 // A tile size of 32 gives us a clear retro maze grid.
 const TILE_SIZE = 32;
@@ -102,15 +99,17 @@ const HIGH_SCORE_STORAGE_KEY = "chompHighScore";
 const SOUND_MUTED_STORAGE_KEY = "chompSoundMuted";
 const MASTER_VOLUME = 0.8;
 const GENERATED_SFX_GAIN = 1;
-const MAIN_MUSIC_GAIN = 0.5;
-const FRENZY_MUSIC_GAIN = 0.55;
-const DEATH_SOUND_GAIN = 0.9;
-const VICTORY_MUSIC_GAIN = 0.65;
-const AUDIO_DEBUG_ENABLED = true;
+const MAIN_MUSIC_GAIN = 0.24;
+const FRENZY_MUSIC_GAIN = 0.28;
+const DEATH_SOUND_GAIN = 0.62;
+const VICTORY_MUSIC_GAIN = 0.42;
 const MUSIC_FADE_SECONDS = 0.45;
 const QUICK_MUSIC_FADE_SECONDS = 0.18;
 const MUSIC_DUCK_GAIN_RATIO = 0.28;
 const LEVEL_CLEAR_MUSIC_GAIN_RATIO = 0.35;
+const MEDIA_FRENZY_MIN_PLAYBACK_RATE = 1;
+const MEDIA_FRENZY_RATE_UPDATE_SECONDS = 0.45;
+const MEDIA_FRENZY_RATE_EPSILON = 0.015;
 const MAIN_MUSIC_LOOP_START = 0;
 const MAIN_MUSIC_LOOP_END = null;
 const FRENZY_MUSIC_LOOP_START = 0;
@@ -1949,7 +1948,9 @@ let victoryMusicSource = null;
 let victoryMusicGain = null;
 let pendingDeathSoundPlayback = false;
 let pendingVictoryMusicPlayback = false;
-let didLogGameStartAudioSnapshot = false;
+let mediaAudioTracks = {};
+let lastMediaFrenzyPlaybackRate = 1;
+let lastMediaFrenzyRateUpdateTime = 0;
 
 function saveSoundMuted() {
   try {
@@ -1964,203 +1965,22 @@ function updateSoundButton() {
   soundButtonElement.setAttribute("aria-pressed", String(!isSoundMuted));
 }
 
-function logAudioDebug(message, details = null) {
-  if (!AUDIO_DEBUG_ENABLED) {
-    return;
+function getMediaElementErrorDetails(mediaElement) {
+  if (!mediaElement || !mediaElement.error) {
+    return null;
   }
 
-  if (details) {
-    console.info(`[CHOMP audio] ${message}`, details);
-  } else {
-    console.info(`[CHOMP audio] ${message}`);
-  }
-}
-
-function appendAudioDiagnosticLine(message, details = null) {
-  const detailText = details ? ` ${JSON.stringify(details)}` : "";
-  const line = `${message}${detailText}`;
-
-  audioDiagnosticOutputElement.classList.add("has-output");
-  audioDiagnosticOutputElement.textContent += `${line}\n`;
-  console.info(`[CHOMP TEST AUDIO] ${line}`);
-}
-
-function getAudioDiagnosticSnapshot() {
-  let savedMuteValue = null;
-
-  try {
-    savedMuteValue = window.localStorage.getItem(SOUND_MUTED_STORAGE_KEY);
-  } catch (error) {
-    savedMuteValue = `unavailable: ${error.message}`;
-  }
+  const errorMessages = {
+    1: "MEDIA_ERR_ABORTED",
+    2: "MEDIA_ERR_NETWORK",
+    3: "MEDIA_ERR_DECODE",
+    4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
+  };
 
   return {
-    isSoundMuted,
-    savedMuteValue,
-    MASTER_VOLUME,
-    masterGain: masterGain ? masterGain.gain.value : null,
-    sfxGain: sfxGain ? sfxGain.gain.value : null,
-    audioUnlocked,
-    audioContextState: audioContext ? audioContext.state : null,
-    gameState,
+    code: mediaElement.error.code,
+    message: errorMessages[mediaElement.error.code] || "UNKNOWN_MEDIA_ERROR",
   };
-}
-
-function logGameStartAudioSnapshot() {
-  if (didLogGameStartAudioSnapshot) {
-    return;
-  }
-
-  const hasMainBuffer = Boolean(loadedAudioBuffers.main);
-  const hasMainMusicSource = Boolean(mainMusicSource);
-
-  didLogGameStartAudioSnapshot = hasMainBuffer || hasMainMusicSource;
-  console.info("[CHOMP audio] Game-start audio snapshot", {
-    audioContextState: audioContext ? audioContext.state : null,
-    audioUnlocked,
-    isSoundMuted,
-    masterGain: masterGain ? masterGain.gain.value : null,
-    sfxGain: sfxGain ? sfxGain.gain.value : null,
-    mainMusicGain: mainMusicGain ? mainMusicGain.gain.value : null,
-    gameState,
-    hasMainBuffer,
-    hasMainMusicSource,
-  });
-}
-
-// TEMP AUDIO DIAGNOSTIC: direct user-gesture playback path for WAV debugging.
-async function handleTestAudioClick() {
-  const diagnostics = document.getElementById("audioDiagnosticOutput");
-
-  diagnostics.textContent = "TEST AUDIO CLICK RECEIVED";
-  diagnostics.classList.add("has-output");
-  console.log("TEST AUDIO CLICK RECEIVED");
-
-  const appendDiagnostic = (message) => {
-    diagnostics.textContent += `\n${message}`;
-    console.log(message);
-  };
-
-  async function runIsolatedAudioTest() {
-    const AudioContextClass =
-      window.AudioContext || window.webkitAudioContext;
-
-    if (!AudioContextClass) {
-      throw new Error("Web Audio API is unavailable.");
-    }
-
-    const testContext = new AudioContextClass();
-
-    diagnostics.textContent +=
-      `\nCreated isolated AudioContext: ${testContext.state}`;
-    console.log(`Created isolated AudioContext: ${testContext.state}`);
-
-    if (testContext.state === "suspended") {
-      await testContext.resume();
-    }
-
-    diagnostics.textContent +=
-      `\nAfter resume: ${testContext.state}`;
-    console.log(`After resume: ${testContext.state}`);
-
-    const oscillator = testContext.createOscillator();
-    const gain = testContext.createGain();
-
-    oscillator.type = "sine";
-    oscillator.frequency.value = 440;
-    gain.gain.value = 0.5;
-
-    oscillator.connect(gain);
-    gain.connect(testContext.destination);
-
-    oscillator.start();
-    oscillator.stop(testContext.currentTime + 1);
-
-    diagnostics.textContent += "\nDirect 440 Hz beep started";
-    console.log("Direct 440 Hz beep started");
-
-    oscillator.onended = async () => {
-      diagnostics.textContent += "\nDirect beep ended";
-      console.log("Direct beep ended");
-      await testContext.close();
-    };
-  }
-
-  try {
-    await runIsolatedAudioTest();
-  } catch (error) {
-    appendDiagnostic(`ERROR: ${error.name}: ${error.message}`);
-  }
-}
-
-// TEMP AUDIO DIAGNOSTIC: direct main WAV playback bypassing the CHOMP manager.
-async function handleTestMainWavClick() {
-  const diagnostics = document.getElementById("audioDiagnosticOutput");
-
-  diagnostics.textContent = "TEST MAIN WAV CLICK RECEIVED";
-  diagnostics.classList.add("has-output");
-  console.log("TEST MAIN WAV CLICK RECEIVED");
-
-  const appendDiagnostic = (message, details = null) => {
-    const detailText = details ? ` ${JSON.stringify(details)}` : "";
-    diagnostics.textContent += `\n${message}${detailText}`;
-    console.log(`[CHOMP TEST MAIN WAV] ${message}`, details || "");
-  };
-
-  try {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-
-    if (!AudioContextClass) {
-      throw new Error("Web Audio API is unavailable.");
-    }
-
-    audioContext = audioContext || new AudioContextClass();
-
-    if (audioContext.state === "suspended") {
-      await audioContext.resume();
-    }
-
-    appendDiagnostic("AudioContext ready", { state: audioContext.state });
-
-    if (audioContext.state !== "running") {
-      throw new Error(`AudioContext did not reach running state. Current state: ${audioContext.state}`);
-    }
-
-    const wavPath = AUDIO_ASSETS.main.path;
-    const response = await fetch(wavPath);
-
-    appendDiagnostic("Main WAV fetch status", {
-      path: wavPath,
-      status: response.status,
-      ok: response.ok,
-    });
-
-    if (!response.ok) {
-      throw new Error(`${wavPath} returned HTTP ${response.status}`);
-    }
-
-    const wavBytes = await response.arrayBuffer();
-    appendDiagnostic("Main WAV bytes received", { bytes: wavBytes.byteLength });
-
-    const decodedBuffer = await decodeAudioArrayBuffer(wavBytes);
-    appendDiagnostic("Main WAV decoded", { duration: `${decodedBuffer.duration.toFixed(2)}s` });
-
-    const source = audioContext.createBufferSource();
-    const gain = audioContext.createGain();
-
-    source.buffer = decodedBuffer;
-    gain.gain.setValueAtTime(0.8, audioContext.currentTime);
-    source.connect(gain);
-    gain.connect(audioContext.destination);
-    source.start();
-    source.stop(audioContext.currentTime + 5);
-    appendDiagnostic("Main WAV direct playback started", { seconds: 5 });
-  } catch (error) {
-    appendDiagnostic("ERROR", {
-      name: error.name,
-      message: error.message,
-    });
-  }
 }
 
 function resumeAudioContext() {
@@ -2260,6 +2080,55 @@ function decodeAudioArrayBuffer(arrayBuffer) {
   });
 }
 
+function loadAudioArrayBuffer(path, onStatus = null) {
+  return new Promise((resolve, reject) => {
+    if (typeof XMLHttpRequest !== "function") {
+      reject(new Error("XMLHttpRequest is unavailable."));
+      return;
+    }
+
+    const request = new XMLHttpRequest();
+
+    request.open("GET", path, true);
+    request.responseType = "arraybuffer";
+
+    request.onload = () => {
+      const status = request.status;
+      const ok = (status >= 200 && status < 300) || (status === 0 && request.response);
+      const bytes = request.response ? request.response.byteLength : 0;
+
+      if (onStatus) {
+        onStatus({ path, status, ok, bytes });
+      }
+
+      if (!ok) {
+        reject(new Error(`${path} returned HTTP ${status}`));
+        return;
+      }
+
+      resolve(request.response);
+    };
+
+    request.onerror = () => {
+      if (onStatus) {
+        onStatus({ path, status: request.status, ok: false, error: "network error" });
+      }
+
+      reject(new Error(`${path} failed to load with XMLHttpRequest.`));
+    };
+
+    request.onabort = () => {
+      if (onStatus) {
+        onStatus({ path, status: request.status, ok: false, error: "aborted" });
+      }
+
+      reject(new Error(`${path} load was aborted.`));
+    };
+
+    request.send();
+  });
+}
+
 function loadAudioBuffers() {
   if (!audioContext) {
     return Promise.resolve(loadedAudioBuffers);
@@ -2276,8 +2145,8 @@ function loadAudioBuffers() {
     );
   }
 
-  if (typeof fetch !== "function") {
-    console.warn("CHOMP audio files could not load because fetch() is unavailable.");
+  if (typeof XMLHttpRequest !== "function") {
+    console.warn("CHOMP audio files could not load because XMLHttpRequest is unavailable.");
     loadedAudioBuffers = Object.keys(AUDIO_ASSETS).reduce((buffers, key) => {
       buffers[key] = null;
       return buffers;
@@ -2287,24 +2156,14 @@ function loadAudioBuffers() {
   }
 
   audioLoadPromise = Promise.all(Object.entries(AUDIO_ASSETS).map(([key, asset]) => {
-    logAudioDebug(`Fetching ${key} WAV`, { path: asset.path });
-
-    return fetch(asset.path)
-      .then((response) => {
-        if (!response.ok) {
-          console.warn(`[CHOMP audio] ${asset.path} returned HTTP ${response.status}.`, { key, path: asset.path });
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        return response.arrayBuffer();
-      })
+    return loadAudioArrayBuffer(asset.path, (event) => {
+      if (!event.ok) {
+        console.warn(`[CHOMP audio] ${asset.path} returned HTTP ${event.status}.`, { key, path: asset.path });
+      }
+    })
       .then((arrayBuffer) => decodeAudioArrayBuffer(arrayBuffer))
       .then((audioBuffer) => {
         loadedAudioBuffers[key] = audioBuffer;
-        logAudioDebug(`Decoded ${key} WAV`, {
-          path: asset.path,
-          duration: `${audioBuffer.duration.toFixed(2)}s`,
-        });
 
         if (key === "death" && pendingDeathSoundPlayback) {
           playDeathSound();
@@ -2318,7 +2177,7 @@ function loadAudioBuffers() {
       })
       .catch((error) => {
         console.warn(
-          `[CHOMP audio] Failed to fetch or decode ${asset.path}. The game will continue without it.`,
+          `[CHOMP audio] Failed to load or decode ${asset.path}. The game will continue without it.`,
           error
         );
         loadedAudioBuffers[key] = null;
@@ -2373,6 +2232,114 @@ function ensureTrackGain(trackKey) {
   }
 
   return victoryMusicGain;
+}
+
+function shouldUseMediaAudioFallback(trackKey) {
+  return Object.prototype.hasOwnProperty.call(loadedAudioBuffers, trackKey) &&
+    !loadedAudioBuffers[trackKey];
+}
+
+function ensureMediaAudioTrack(trackKey) {
+  if (!audioContext) {
+    return null;
+  }
+
+  if (mediaAudioTracks[trackKey]) {
+    return mediaAudioTracks[trackKey];
+  }
+
+  const asset = AUDIO_ASSETS[trackKey];
+  const mediaElement = new Audio();
+  const gainNode = ensureTrackGain(trackKey);
+  const source = audioContext.createMediaElementSource(mediaElement);
+  const track = {
+    element: mediaElement,
+    source,
+    gainNode,
+    stopToken: 0,
+  };
+
+  mediaElement.preload = "auto";
+  mediaElement.loop = Boolean(asset.loop);
+  mediaElement.src = asset.path;
+  mediaElement.addEventListener("error", () => {
+    console.warn(`[CHOMP audio] Media fallback failed for ${asset.path}.`, getMediaElementErrorDetails(mediaElement));
+  });
+  mediaElement.addEventListener("ended", () => {
+    if (trackKey === "death") {
+      fadeGain(gainNode, 0, QUICK_MUSIC_FADE_SECONDS);
+      syncAudioForGameState();
+    }
+
+    if (trackKey === "victory") {
+      fadeGain(gainNode, 0, QUICK_MUSIC_FADE_SECONDS);
+    }
+  });
+  source.connect(gainNode);
+  mediaAudioTracks[trackKey] = track;
+
+  return track;
+}
+
+function playMediaAudioTrack(trackKey, options = {}) {
+  if (!audioContext || audioContext.state !== "running") {
+    return null;
+  }
+
+  const track = ensureMediaAudioTrack(trackKey);
+
+  if (!track) {
+    return null;
+  }
+
+  const { restart = false } = options;
+
+  track.stopToken += 1;
+
+  if (restart) {
+    try {
+      track.element.currentTime = 0;
+    } catch (error) {
+      // Some browsers briefly block seeking until metadata is ready.
+    }
+  }
+
+  const playPromise = track.element.play();
+
+  if (playPromise && typeof playPromise.catch === "function") {
+    playPromise.catch((error) => {
+      console.warn(`[CHOMP audio] Media fallback could not play ${AUDIO_ASSETS[trackKey].path}.`, error);
+    });
+  }
+
+  return track;
+}
+
+function stopMediaAudioTrack(trackKey, duration = MUSIC_FADE_SECONDS, reset = false) {
+  const track = mediaAudioTracks[trackKey];
+
+  if (!track) {
+    return;
+  }
+
+  const stopToken = track.stopToken + 1;
+  track.stopToken = stopToken;
+
+  window.setTimeout(() => {
+    if (track.stopToken !== stopToken) {
+      return;
+    }
+
+    track.element.pause();
+
+    if (reset) {
+      try {
+        track.element.currentTime = 0;
+      } catch (error) {
+        // Resetting is best-effort for media elements.
+      }
+    }
+  }, Math.max(0, duration * 1000 + 40));
 }
 
 function fadeGain(gainNode, targetValue, duration = MUSIC_FADE_SECONDS) {
@@ -2439,12 +2406,7 @@ function ensureLoopingSource(trackKey) {
   }
 
   try {
-    logAudioDebug(`${trackKey === "main" ? "Main music" : "Frenzy music"} starts`, {
-      path: asset.path,
-      contextState: audioContext.state,
-      loopStart: source.loopStart,
-      loopEnd: source.loopEnd,
-    });
+    stopMediaAudioTrack(trackKey, 0, true);
     source.start();
   } catch (error) {
     console.warn(`CHOMP audio could not start ${asset.path}.`, error);
@@ -2456,6 +2418,8 @@ function ensureLoopingSource(trackKey) {
 function stopLoopingSource(trackKey, duration = MUSIC_FADE_SECONDS) {
   const source = trackKey === "main" ? mainMusicSource : frenzyMusicSource;
   const gainNode = trackKey === "main" ? mainMusicGain : frenzyMusicGain;
+
+  stopMediaAudioTrack(trackKey, duration, false);
 
   if (!source) {
     fadeGain(gainNode, 0, duration);
@@ -2478,9 +2442,13 @@ function stopLoopingSource(trackKey, duration = MUSIC_FADE_SECONDS) {
 }
 
 function startMainMusic(volumeRatio = 1, duration = MUSIC_FADE_SECONDS) {
-  logAudioDebug("Main music playback requested", { contextState: audioContext ? audioContext.state : "unavailable" });
   ensureTrackGain("main");
-  ensureLoopingSource("main");
+  const source = ensureLoopingSource("main");
+
+  if (!source && shouldUseMediaAudioFallback("main")) {
+    playMediaAudioTrack("main");
+  }
+
   fadeGain(mainMusicGain, getMusicVolume("main", volumeRatio), duration);
 }
 
@@ -2489,9 +2457,13 @@ function fadeMainMusic(volumeRatio = 0, duration = MUSIC_FADE_SECONDS) {
 }
 
 function startFrenzyMusic(duration = QUICK_MUSIC_FADE_SECONDS) {
-  logAudioDebug("Frenzy music playback requested", { contextState: audioContext ? audioContext.state : "unavailable" });
   ensureTrackGain("frenzy");
-  ensureLoopingSource("frenzy");
+  const source = ensureLoopingSource("frenzy");
+
+  if (!source && shouldUseMediaAudioFallback("frenzy")) {
+    playMediaAudioTrack("frenzy");
+  }
+
   updateFrenzyMusicPlaybackRate(true);
   fadeGain(frenzyMusicGain, getMusicVolume("frenzy"), duration);
 }
@@ -2502,6 +2474,12 @@ function stopFrenzyMusic(duration = QUICK_MUSIC_FADE_SECONDS) {
     frenzyMusicSource.playbackRate.setValueAtTime(1, audioContext.currentTime);
   }
 
+  if (mediaAudioTracks.frenzy) {
+    mediaAudioTracks.frenzy.element.playbackRate = 1;
+  }
+
+  lastMediaFrenzyPlaybackRate = 1;
+  lastMediaFrenzyRateUpdateTime = 0;
   stopLoopingSource("frenzy", duration);
 }
 
@@ -2523,8 +2501,31 @@ function getFrenzyMusicPlaybackRate() {
   return 0.72;
 }
 
+function updateMediaFrenzyPlaybackRate(targetRate, force = false) {
+  const track = mediaAudioTracks.frenzy;
+
+  if (!track) {
+    return;
+  }
+
+  const now = audioContext ? audioContext.currentTime : 0;
+  const mediaRate = Math.max(MEDIA_FRENZY_MIN_PLAYBACK_RATE, targetRate);
+  const timeSinceLastUpdate = now - lastMediaFrenzyRateUpdateTime;
+  const rateDelta = Math.abs(mediaRate - lastMediaFrenzyPlaybackRate);
+
+  if (!force &&
+    (timeSinceLastUpdate < MEDIA_FRENZY_RATE_UPDATE_SECONDS ||
+    rateDelta < MEDIA_FRENZY_RATE_EPSILON)) {
+    return;
+  }
+
+  track.element.playbackRate = mediaRate;
+  lastMediaFrenzyPlaybackRate = mediaRate;
+  lastMediaFrenzyRateUpdateTime = now;
+}
+
 function updateFrenzyMusicPlaybackRate(force = false) {
-  if (!audioContext || !frenzyMusicSource || !frenzyMode.active) {
+  if (!audioContext || !frenzyMode.active) {
     return;
   }
 
@@ -2532,9 +2533,15 @@ function updateFrenzyMusicPlaybackRate(force = false) {
   const targetRate = getFrenzyMusicPlaybackRate();
   const rampSeconds = force ? 0.08 : 0.22;
 
-  frenzyMusicSource.playbackRate.cancelScheduledValues(now);
-  frenzyMusicSource.playbackRate.setValueAtTime(frenzyMusicSource.playbackRate.value, now);
-  frenzyMusicSource.playbackRate.linearRampToValueAtTime(targetRate, now + rampSeconds);
+  if (frenzyMusicSource) {
+    frenzyMusicSource.playbackRate.cancelScheduledValues(now);
+    frenzyMusicSource.playbackRate.setValueAtTime(frenzyMusicSource.playbackRate.value, now);
+    frenzyMusicSource.playbackRate.linearRampToValueAtTime(targetRate, now + rampSeconds);
+  }
+
+  if (mediaAudioTracks.frenzy) {
+    updateMediaFrenzyPlaybackRate(targetRate, force);
+  }
 }
 
 function duckGameplayMusic() {
@@ -2543,6 +2550,8 @@ function duckGameplayMusic() {
 }
 
 function stopDeathSound(immediate = false) {
+  stopMediaAudioTrack("death", immediate ? 0 : QUICK_MUSIC_FADE_SECONDS, true);
+
   if (!deathSoundSource) {
     return;
   }
@@ -2562,9 +2571,10 @@ function playDeathSound() {
     return;
   }
 
-  logAudioDebug("Death sound playback requested", { contextState: audioContext.state });
   pendingDeathSoundPlayback = true;
-  resumeAudioContext();
+  resumeAudioContext().catch((error) => {
+    console.warn("CHOMP audio could not resume before death sound playback.", error);
+  });
 
   if (audioContext.state === "suspended") {
     return;
@@ -2576,8 +2586,18 @@ function playDeathSound() {
   duckGameplayMusic();
 
   if (!buffer) {
-    loadAudioBuffers();
-    setTimeout(syncAudioForGameState, 700);
+    if (shouldUseMediaAudioFallback("death")) {
+      const gainNode = ensureTrackGain("death");
+
+      pendingDeathSoundPlayback = false;
+      gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+      gainNode.gain.setValueAtTime(isSoundMuted ? 0 : DEATH_SOUND_GAIN, audioContext.currentTime);
+      playMediaAudioTrack("death", { restart: true });
+    } else {
+      loadAudioBuffers();
+      setTimeout(syncAudioForGameState, 700);
+    }
+
     return;
   }
 
@@ -2599,10 +2619,6 @@ function playDeathSound() {
   deathSoundSource = source;
 
   try {
-    logAudioDebug("Death sound starts", {
-      path: AUDIO_ASSETS.death.path,
-      contextState: audioContext.state,
-    });
     source.start();
   } catch (error) {
     console.warn(`CHOMP audio could not start ${AUDIO_ASSETS.death.path}.`, error);
@@ -2610,6 +2626,8 @@ function playDeathSound() {
 }
 
 function stopVictoryMusic(duration = QUICK_MUSIC_FADE_SECONDS) {
+  stopMediaAudioTrack("victory", duration, true);
+
   if (!victoryMusicSource) {
     fadeGain(victoryMusicGain, 0, duration);
     return;
@@ -2632,7 +2650,9 @@ function playVictoryMusic() {
   }
 
   pendingVictoryMusicPlayback = true;
-  resumeAudioContext();
+  resumeAudioContext().catch((error) => {
+    console.warn("CHOMP audio could not resume before victory music playback.", error);
+  });
 
   if (audioContext.state === "suspended") {
     return;
@@ -2650,7 +2670,18 @@ function playVictoryMusic() {
   }
 
   if (!buffer) {
-    loadAudioBuffers();
+    if (shouldUseMediaAudioFallback("victory")) {
+      const gainNode = ensureTrackGain("victory");
+
+      pendingVictoryMusicPlayback = false;
+      gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+      gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+      playMediaAudioTrack("victory", { restart: true });
+      fadeGain(gainNode, VICTORY_MUSIC_GAIN, MUSIC_FADE_SECONDS);
+    } else {
+      loadAudioBuffers();
+    }
+
     return;
   }
 
@@ -2736,7 +2767,6 @@ function syncAudioForGameState() {
     stopVictoryMusic(QUICK_MUSIC_FADE_SECONDS);
     stopFrenzyMusic(QUICK_MUSIC_FADE_SECONDS);
     startMainMusic(1, MUSIC_FADE_SECONDS);
-    logGameStartAudioSnapshot();
   }
 }
 
@@ -2831,7 +2861,9 @@ function playSound(name) {
 
   try {
     if (audioContext.state === "suspended") {
-      audioContext.resume().catch(() => {});
+      audioContext.resume().catch((error) => {
+        console.warn("CHOMP audio could not resume before sound effect playback.", error);
+      });
     }
 
     if (name === "chum") {
@@ -5926,8 +5958,6 @@ window.addEventListener("keydown", (event) => {
 canvas.addEventListener("click", startGame);
 pauseButtonElement.addEventListener("click", togglePause);
 soundButtonElement.addEventListener("click", toggleMute);
-testAudioButtonElement.addEventListener("click", handleTestAudioClick);
-testMainWavButtonElement.addEventListener("click", handleTestMainWavClick);
 
 let touchStartX = 0;
 let touchStartY = 0;

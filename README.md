@@ -190,7 +190,7 @@ Run a small local static server, then open the local URL in a browser:
 python3 -m http.server 8000
 ```
 
-Then visit `http://localhost:8000/`. The WAV music and one-shot sounds are loaded with `fetch()`, so direct `file://` opening may leave the game playable but prevent WAV audio from loading.
+Then visit `http://localhost:8000/`. The WAV music and one-shot sounds are loaded by the browser from the `audio/` folder, so direct `file://` opening may leave the game playable but prevent WAV audio from loading.
 
 To test the game:
 
