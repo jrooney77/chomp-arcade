@@ -38,6 +38,20 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - Touching a vulnerable enemy awards bonus points and sends that enemy back to spawn.
 - Losing a life, changing levels, or restarting clears Frenzy Mode.
 
+## Audio
+
+- CHOMP uses the Web Audio API for both generated arcade sound effects and WAV playback.
+- Music starts only after user interaction, such as pressing Space, clicking, tapping, or using a control button.
+- Audio assets live in the `audio/` folder:
+  - `audio/chomp-main-loop.wav`: normal gameplay loop.
+  - `audio/chomp-frenzy-loop.wav`: Frenzy Mode loop with playback rate slowing near the timer end.
+  - `audio/chomp-death.wav`: one-shot life-loss sound.
+  - `audio/chomp-victory.wav`: one-shot final victory music after Level 50.
+- The mute button and saved mute preference silence music, WAV one-shots, and generated sound effects.
+- Music volume can be tuned in `script.js` with `MAIN_MUSIC_GAIN`, `FRENZY_MUSIC_GAIN`, `DEATH_SOUND_GAIN`, and `VICTORY_MUSIC_GAIN`.
+- Loop points can be adjusted in `script.js` with `MAIN_MUSIC_LOOP_START`, `MAIN_MUSIC_LOOP_END`, `FRENZY_MUSIC_LOOP_START`, and `FRENZY_MUSIC_LOOP_END`.
+- The loop files are configured for browser looping, but loop seams still need browser testing before calling them perfectly seamless.
+
 ## Enemies
 
 - The shark starts in the bottom center corridor, and enemies start near the maze middle.
@@ -170,11 +184,17 @@ The canvas uses 32-pixel tiles, with 19 columns and 15 rows. That creates an int
 
 ## Run Locally
 
-Open `index.html` in a browser. No build step or local server is required.
+Run a small local static server, then open the local URL in a browser:
+
+```sh
+python3 -m http.server 8000
+```
+
+Then visit `http://localhost:8000/`. The WAV music and one-shot sounds are loaded with `fetch()`, so direct `file://` opening may leave the game playable but prevent WAV audio from loading.
 
 To test the game:
 
-1. Open `index.html`.
+1. Open `http://localhost:8000/`.
 2. Confirm the CHOMP start screen is visible.
 3. Press Space, click the canvas, or tap the canvas.
 4. Confirm the maze appears with the shark in the bottom center path.

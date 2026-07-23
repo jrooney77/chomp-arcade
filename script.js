@@ -98,6 +98,45 @@ const DEFAULT_GOLDEN_FISH_SETTINGS = {
 const HIGH_SCORE_STORAGE_KEY = "chompHighScore";
 const SOUND_MUTED_STORAGE_KEY = "chompSoundMuted";
 const MASTER_VOLUME = 0.18;
+const GENERATED_SFX_GAIN = 1;
+const MAIN_MUSIC_GAIN = 0.2;
+const FRENZY_MUSIC_GAIN = 0.25;
+const DEATH_SOUND_GAIN = 0.55;
+const VICTORY_MUSIC_GAIN = 0.35;
+const MUSIC_FADE_SECONDS = 0.45;
+const QUICK_MUSIC_FADE_SECONDS = 0.18;
+const MUSIC_DUCK_GAIN_RATIO = 0.28;
+const LEVEL_CLEAR_MUSIC_GAIN_RATIO = 0.35;
+const MAIN_MUSIC_LOOP_START = 0;
+const MAIN_MUSIC_LOOP_END = null;
+const FRENZY_MUSIC_LOOP_START = 0;
+const FRENZY_MUSIC_LOOP_END = null;
+const AUDIO_ASSETS = {
+  main: {
+    path: "audio/chomp-main-loop.wav",
+    volume: MAIN_MUSIC_GAIN,
+    loop: true,
+    loopStart: MAIN_MUSIC_LOOP_START,
+    loopEnd: MAIN_MUSIC_LOOP_END,
+  },
+  frenzy: {
+    path: "audio/chomp-frenzy-loop.wav",
+    volume: FRENZY_MUSIC_GAIN,
+    loop: true,
+    loopStart: FRENZY_MUSIC_LOOP_START,
+    loopEnd: FRENZY_MUSIC_LOOP_END,
+  },
+  death: {
+    path: "audio/chomp-death.wav",
+    volume: DEATH_SOUND_GAIN,
+    loop: false,
+  },
+  victory: {
+    path: "audio/chomp-victory.wav",
+    volume: VICTORY_MUSIC_GAIN,
+    loop: false,
+  },
+};
 const REVERB_ENABLED = true;
 const REVERB_DELAY_SECONDS = 0.12;
 const REVERB_FEEDBACK = 0.22;
@@ -1833,6 +1872,7 @@ function startGame() {
     playSound("select");
     gameState = GAME_STATE.PLAYING;
     updateStatusDisplay();
+    syncAudioForGameState();
     return;
   }
 
@@ -1890,8 +1930,21 @@ function loadSoundMuted() {
 let isSoundMuted = loadSoundMuted();
 let audioContext = null;
 let masterGain = null;
+let sfxGain = null;
 let audioBus = null;
 let audioUnlocked = false;
+let audioLoadPromise = null;
+let loadedAudioBuffers = {};
+let mainMusicSource = null;
+let mainMusicGain = null;
+let frenzyMusicSource = null;
+let frenzyMusicGain = null;
+let deathSoundSource = null;
+let deathSoundGain = null;
+let victoryMusicSource = null;
+let victoryMusicGain = null;
+let pendingDeathSoundPlayback = false;
+let pendingVictoryMusicPlayback = false;
 
 function saveSoundMuted() {
   try {
@@ -1906,6 +1959,20 @@ function updateSoundButton() {
   soundButtonElement.setAttribute("aria-pressed", String(!isSoundMuted));
 }
 
+function resumeAudioContext() {
+  if (!audioContext || audioContext.state !== "suspended") {
+    return Promise.resolve();
+  }
+
+  return audioContext.resume()
+    .then(() => {
+      syncAudioForGameState();
+    })
+    .catch((error) => {
+      console.warn("CHOMP audio could not resume yet.", error);
+    });
+}
+
 function createAudioBus() {
   const dryGain = audioContext.createGain();
   const wetInput = audioContext.createGain();
@@ -1915,7 +1982,7 @@ function createAudioBus() {
 
   // Dry signal is the clean, immediate arcade sound.
   dryGain.gain.value = 1;
-  dryGain.connect(masterGain);
+  dryGain.connect(sfxGain);
 
   // Wet signal is a short delay with quiet feedback for subtle underwater space.
   wetInput.gain.value = REVERB_ENABLED ? 1 : 0;
@@ -1927,7 +1994,7 @@ function createAudioBus() {
   delay.connect(feedback);
   feedback.connect(delay);
   delay.connect(wetGain);
-  wetGain.connect(masterGain);
+  wetGain.connect(sfxGain);
 
   return { dryGain, wetInput };
 }
@@ -1937,6 +2004,7 @@ function createAudioBus() {
 // unlocks only after the player chooses to interact with the game.
 function initAudio() {
   if (audioUnlocked) {
+    syncAudioForGameState();
     return true;
   }
 
@@ -1951,16 +2019,486 @@ function initAudio() {
     masterGain = masterGain || audioContext.createGain();
     masterGain.gain.value = isSoundMuted ? 0 : MASTER_VOLUME;
     masterGain.connect(audioContext.destination);
+    sfxGain = sfxGain || audioContext.createGain();
+    sfxGain.gain.value = GENERATED_SFX_GAIN;
+    sfxGain.connect(masterGain);
     audioBus = audioBus || createAudioBus();
 
-    if (audioContext.state === "suspended") {
-      audioContext.resume().catch(() => {});
-    }
-
     audioUnlocked = true;
+    loadAudioBuffers();
+    resumeAudioContext();
+    syncAudioForGameState();
     return true;
   } catch (error) {
     return false;
+  }
+}
+
+function decodeAudioArrayBuffer(arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    const handleSuccess = (buffer) => resolve(buffer);
+    const handleFailure = (error) => reject(error);
+    const decodeResult = audioContext.decodeAudioData(arrayBuffer, handleSuccess, handleFailure);
+
+    if (decodeResult && typeof decodeResult.then === "function") {
+      decodeResult.then(handleSuccess).catch(handleFailure);
+    }
+  });
+}
+
+function loadAudioBuffers() {
+  if (!audioContext) {
+    return Promise.resolve(loadedAudioBuffers);
+  }
+
+  if (audioLoadPromise) {
+    return audioLoadPromise;
+  }
+
+  if (window.location.protocol === "file:") {
+    console.warn(
+      "CHOMP WAV audio requires serving the game over http:// or https://. " +
+      "Open it through a local static server or GitHub Pages instead of file://."
+    );
+  }
+
+  if (typeof fetch !== "function") {
+    console.warn("CHOMP audio files could not load because fetch() is unavailable.");
+    loadedAudioBuffers = Object.keys(AUDIO_ASSETS).reduce((buffers, key) => {
+      buffers[key] = null;
+      return buffers;
+    }, {});
+    audioLoadPromise = Promise.resolve(loadedAudioBuffers);
+    return audioLoadPromise;
+  }
+
+  audioLoadPromise = Promise.all(Object.entries(AUDIO_ASSETS).map(([key, asset]) => (
+    fetch(asset.path)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        return response.arrayBuffer();
+      })
+      .then((arrayBuffer) => decodeAudioArrayBuffer(arrayBuffer))
+      .then((audioBuffer) => {
+        loadedAudioBuffers[key] = audioBuffer;
+        if (key === "death" && pendingDeathSoundPlayback) {
+          playDeathSound();
+        }
+
+        if (key === "victory" && pendingVictoryMusicPlayback && gameState === GAME_STATE.WIN) {
+          playVictoryMusic();
+        }
+
+        syncAudioForGameState();
+        return audioBuffer;
+      })
+      .catch((error) => {
+        console.warn(`CHOMP audio failed to load ${asset.path}. The game will continue without it.`, error);
+        loadedAudioBuffers[key] = null;
+        return null;
+      })
+  ))).then(() => {
+    syncAudioForGameState();
+    return loadedAudioBuffers;
+  });
+
+  return audioLoadPromise;
+}
+
+function getTrackLoopEnd(trackKey, buffer) {
+  const configuredLoopEnd = AUDIO_ASSETS[trackKey].loopEnd;
+
+  return configuredLoopEnd === null ? buffer.duration : configuredLoopEnd;
+}
+
+function ensureTrackGain(trackKey) {
+  if (trackKey === "main" && !mainMusicGain) {
+    mainMusicGain = audioContext.createGain();
+    mainMusicGain.gain.value = 0;
+    mainMusicGain.connect(masterGain);
+  }
+
+  if (trackKey === "frenzy" && !frenzyMusicGain) {
+    frenzyMusicGain = audioContext.createGain();
+    frenzyMusicGain.gain.value = 0;
+    frenzyMusicGain.connect(masterGain);
+  }
+
+  if (trackKey === "death" && !deathSoundGain) {
+    deathSoundGain = audioContext.createGain();
+    deathSoundGain.gain.value = 0;
+    deathSoundGain.connect(masterGain);
+  }
+
+  if (trackKey === "victory" && !victoryMusicGain) {
+    victoryMusicGain = audioContext.createGain();
+    victoryMusicGain.gain.value = 0;
+    victoryMusicGain.connect(masterGain);
+  }
+
+  if (trackKey === "main") {
+    return mainMusicGain;
+  }
+
+  if (trackKey === "frenzy") {
+    return frenzyMusicGain;
+  }
+
+  if (trackKey === "death") {
+    return deathSoundGain;
+  }
+
+  return victoryMusicGain;
+}
+
+function fadeGain(gainNode, targetValue, duration = MUSIC_FADE_SECONDS) {
+  if (!audioContext || !gainNode) {
+    return;
+  }
+
+  const now = audioContext.currentTime;
+  const currentValue = gainNode.gain.value;
+
+  gainNode.gain.cancelScheduledValues(now);
+  gainNode.gain.setValueAtTime(currentValue, now);
+  gainNode.gain.linearRampToValueAtTime(targetValue, now + duration);
+}
+
+function getMusicVolume(trackKey, ratio = 1) {
+  return AUDIO_ASSETS[trackKey].volume * ratio;
+}
+
+function ensureLoopingSource(trackKey) {
+  const buffer = loadedAudioBuffers[trackKey];
+
+  if (!audioContext || !buffer) {
+    loadAudioBuffers();
+    return null;
+  }
+
+  if (trackKey === "main" && mainMusicSource) {
+    return mainMusicSource;
+  }
+
+  if (trackKey === "frenzy" && frenzyMusicSource) {
+    return frenzyMusicSource;
+  }
+
+  const asset = AUDIO_ASSETS[trackKey];
+  const source = audioContext.createBufferSource();
+  const gainNode = ensureTrackGain(trackKey);
+
+  source.buffer = buffer;
+  source.loop = true;
+  source.loopStart = asset.loopStart;
+  source.loopEnd = getTrackLoopEnd(trackKey, buffer);
+  source.connect(gainNode);
+  source.onended = () => {
+    if (trackKey === "main" && mainMusicSource === source) {
+      mainMusicSource = null;
+    }
+
+    if (trackKey === "frenzy" && frenzyMusicSource === source) {
+      frenzyMusicSource = null;
+    }
+  };
+
+  if (trackKey === "frenzy") {
+    source.playbackRate.setValueAtTime(1, audioContext.currentTime);
+    frenzyMusicSource = source;
+  } else {
+    mainMusicSource = source;
+  }
+
+  try {
+    source.start();
+  } catch (error) {
+    console.warn(`CHOMP audio could not start ${asset.path}.`, error);
+  }
+
+  return source;
+}
+
+function stopLoopingSource(trackKey, duration = MUSIC_FADE_SECONDS) {
+  const source = trackKey === "main" ? mainMusicSource : frenzyMusicSource;
+  const gainNode = trackKey === "main" ? mainMusicGain : frenzyMusicGain;
+
+  if (!source) {
+    fadeGain(gainNode, 0, duration);
+    return;
+  }
+
+  fadeGain(gainNode, 0, duration);
+
+  try {
+    source.stop(audioContext.currentTime + duration + 0.04);
+  } catch (error) {
+    // A source may already be stopping; keeping gameplay alive matters more.
+  }
+
+  if (trackKey === "main") {
+    mainMusicSource = null;
+  } else {
+    frenzyMusicSource = null;
+  }
+}
+
+function startMainMusic(volumeRatio = 1, duration = MUSIC_FADE_SECONDS) {
+  ensureTrackGain("main");
+  ensureLoopingSource("main");
+  fadeGain(mainMusicGain, getMusicVolume("main", volumeRatio), duration);
+}
+
+function fadeMainMusic(volumeRatio = 0, duration = MUSIC_FADE_SECONDS) {
+  fadeGain(mainMusicGain, getMusicVolume("main", volumeRatio), duration);
+}
+
+function startFrenzyMusic(duration = QUICK_MUSIC_FADE_SECONDS) {
+  ensureTrackGain("frenzy");
+  ensureLoopingSource("frenzy");
+  updateFrenzyMusicPlaybackRate(true);
+  fadeGain(frenzyMusicGain, getMusicVolume("frenzy"), duration);
+}
+
+function stopFrenzyMusic(duration = QUICK_MUSIC_FADE_SECONDS) {
+  if (frenzyMusicSource) {
+    frenzyMusicSource.playbackRate.cancelScheduledValues(audioContext.currentTime);
+    frenzyMusicSource.playbackRate.setValueAtTime(1, audioContext.currentTime);
+  }
+
+  stopLoopingSource("frenzy", duration);
+}
+
+function getFrenzyMusicPlaybackRate() {
+  const secondsLeft = getFrenzyTimeLeft() / 1000;
+
+  if (secondsLeft > 5) {
+    return 1;
+  }
+
+  if (secondsLeft > 3) {
+    return 0.82 + ((secondsLeft - 3) / 2) * 0.1;
+  }
+
+  if (secondsLeft > 1) {
+    return 0.72 + ((secondsLeft - 1) / 2) * 0.1;
+  }
+
+  return 0.72;
+}
+
+function updateFrenzyMusicPlaybackRate(force = false) {
+  if (!audioContext || !frenzyMusicSource || !frenzyMode.active) {
+    return;
+  }
+
+  const now = audioContext.currentTime;
+  const targetRate = getFrenzyMusicPlaybackRate();
+  const rampSeconds = force ? 0.08 : 0.22;
+
+  frenzyMusicSource.playbackRate.cancelScheduledValues(now);
+  frenzyMusicSource.playbackRate.setValueAtTime(frenzyMusicSource.playbackRate.value, now);
+  frenzyMusicSource.playbackRate.linearRampToValueAtTime(targetRate, now + rampSeconds);
+}
+
+function duckGameplayMusic() {
+  fadeGain(mainMusicGain, getMusicVolume("main", MUSIC_DUCK_GAIN_RATIO), QUICK_MUSIC_FADE_SECONDS);
+  fadeGain(frenzyMusicGain, getMusicVolume("frenzy", MUSIC_DUCK_GAIN_RATIO), QUICK_MUSIC_FADE_SECONDS);
+}
+
+function stopDeathSound(immediate = false) {
+  if (!deathSoundSource) {
+    return;
+  }
+
+  try {
+    deathSoundSource.stop(audioContext.currentTime + (immediate ? 0 : QUICK_MUSIC_FADE_SECONDS));
+  } catch (error) {
+    // The previous one-shot may already have ended.
+  }
+
+  deathSoundSource = null;
+  fadeGain(deathSoundGain, 0, immediate ? 0 : QUICK_MUSIC_FADE_SECONDS);
+}
+
+function playDeathSound() {
+  if (!audioUnlocked || !audioContext) {
+    return;
+  }
+
+  pendingDeathSoundPlayback = true;
+  resumeAudioContext();
+
+  if (audioContext.state === "suspended") {
+    return;
+  }
+
+  const buffer = loadedAudioBuffers.death;
+
+  stopDeathSound(true);
+  duckGameplayMusic();
+
+  if (!buffer) {
+    loadAudioBuffers();
+    setTimeout(syncAudioForGameState, 700);
+    return;
+  }
+
+  const source = audioContext.createBufferSource();
+  const gainNode = ensureTrackGain("death");
+
+  pendingDeathSoundPlayback = false;
+  source.buffer = buffer;
+  source.connect(gainNode);
+  gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+  gainNode.gain.setValueAtTime(isSoundMuted ? 0 : DEATH_SOUND_GAIN, audioContext.currentTime);
+  source.onended = () => {
+    if (deathSoundSource === source) {
+      deathSoundSource = null;
+      fadeGain(gainNode, 0, QUICK_MUSIC_FADE_SECONDS);
+      syncAudioForGameState();
+    }
+  };
+  deathSoundSource = source;
+
+  try {
+    source.start();
+  } catch (error) {
+    console.warn(`CHOMP audio could not start ${AUDIO_ASSETS.death.path}.`, error);
+  }
+}
+
+function stopVictoryMusic(duration = QUICK_MUSIC_FADE_SECONDS) {
+  if (!victoryMusicSource) {
+    fadeGain(victoryMusicGain, 0, duration);
+    return;
+  }
+
+  fadeGain(victoryMusicGain, 0, duration);
+
+  try {
+    victoryMusicSource.stop(audioContext.currentTime + duration + 0.04);
+  } catch (error) {
+    // The one-shot may already have ended.
+  }
+
+  victoryMusicSource = null;
+}
+
+function playVictoryMusic() {
+  if (!audioUnlocked || !audioContext) {
+    return;
+  }
+
+  pendingVictoryMusicPlayback = true;
+  resumeAudioContext();
+
+  if (audioContext.state === "suspended") {
+    return;
+  }
+
+  const buffer = loadedAudioBuffers.victory;
+
+  stopLoopingSource("main", QUICK_MUSIC_FADE_SECONDS);
+  stopLoopingSource("frenzy", QUICK_MUSIC_FADE_SECONDS);
+  stopDeathSound(true);
+
+  if (victoryMusicSource) {
+    fadeGain(victoryMusicGain, VICTORY_MUSIC_GAIN, QUICK_MUSIC_FADE_SECONDS);
+    return;
+  }
+
+  if (!buffer) {
+    loadAudioBuffers();
+    return;
+  }
+
+  stopVictoryMusic(0);
+
+  const source = audioContext.createBufferSource();
+  const gainNode = ensureTrackGain("victory");
+
+  pendingVictoryMusicPlayback = false;
+  source.buffer = buffer;
+  source.loop = false;
+  source.connect(gainNode);
+  gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+  gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+  fadeGain(gainNode, VICTORY_MUSIC_GAIN, MUSIC_FADE_SECONDS);
+  source.onended = () => {
+    if (victoryMusicSource === source) {
+      victoryMusicSource = null;
+      fadeGain(gainNode, 0, QUICK_MUSIC_FADE_SECONDS);
+    }
+  };
+  victoryMusicSource = source;
+
+  try {
+    source.start();
+  } catch (error) {
+    console.warn(`CHOMP audio could not start ${AUDIO_ASSETS.victory.path}.`, error);
+  }
+}
+
+function syncAudioForGameState() {
+  if (!audioUnlocked || !audioContext) {
+    return;
+  }
+
+  loadAudioBuffers();
+
+  if (audioContext.state === "suspended") {
+    resumeAudioContext();
+    return;
+  }
+
+  if (isPaused) {
+    fadeMainMusic(0, QUICK_MUSIC_FADE_SECONDS);
+    fadeGain(frenzyMusicGain, 0, QUICK_MUSIC_FADE_SECONDS);
+    return;
+  }
+
+  if (gameState === GAME_STATE.START) {
+    stopLoopingSource("main", QUICK_MUSIC_FADE_SECONDS);
+    stopFrenzyMusic(QUICK_MUSIC_FADE_SECONDS);
+    stopVictoryMusic(QUICK_MUSIC_FADE_SECONDS);
+    return;
+  }
+
+  if (gameState === GAME_STATE.WIN) {
+    playVictoryMusic();
+    return;
+  }
+
+  if (gameState === GAME_STATE.GAME_OVER) {
+    if (!deathSoundSource) {
+      stopLoopingSource("main", MUSIC_FADE_SECONDS);
+      stopFrenzyMusic(MUSIC_FADE_SECONDS);
+    }
+    return;
+  }
+
+  if (gameState === GAME_STATE.LEVEL_CLEAR) {
+    stopVictoryMusic(QUICK_MUSIC_FADE_SECONDS);
+    stopFrenzyMusic(QUICK_MUSIC_FADE_SECONDS);
+    startMainMusic(LEVEL_CLEAR_MUSIC_GAIN_RATIO, MUSIC_FADE_SECONDS);
+    return;
+  }
+
+  if (gameState === GAME_STATE.PLAYING && frenzyMode.active) {
+    stopVictoryMusic(QUICK_MUSIC_FADE_SECONDS);
+    startFrenzyMusic(QUICK_MUSIC_FADE_SECONDS);
+    fadeMainMusic(0, QUICK_MUSIC_FADE_SECONDS);
+    return;
+  }
+
+  if (gameState === GAME_STATE.PLAYING) {
+    stopVictoryMusic(QUICK_MUSIC_FADE_SECONDS);
+    stopFrenzyMusic(QUICK_MUSIC_FADE_SECONDS);
+    startMainMusic(1, MUSIC_FADE_SECONDS);
   }
 }
 
@@ -1972,6 +2510,8 @@ function setMuted(isMuted) {
   if (masterGain) {
     masterGain.gain.value = isSoundMuted ? 0 : MASTER_VOLUME;
   }
+
+  syncAudioForGameState();
 }
 
 function toggleMute() {
@@ -2150,6 +2690,7 @@ function togglePause() {
 
   updateFrenzyDisplay();
   updatePauseButton();
+  syncAudioForGameState();
 }
 
 function cloneMaze(sourceMaze) {
@@ -2271,6 +2812,7 @@ function startFrenzyMode() {
   });
 
   updateFrenzyDisplay();
+  syncAudioForGameState();
   resizeCanvasDisplay();
 }
 
@@ -2300,6 +2842,7 @@ function endFrenzyMode() {
   }
 
   updateFrenzyDisplay();
+  syncAudioForGameState();
   resizeCanvasDisplay();
 }
 
@@ -2314,6 +2857,7 @@ function updateFrenzyMode() {
     return;
   }
 
+  updateFrenzyMusicPlaybackRate();
   updateFrenzyDisplay();
 }
 
@@ -2473,9 +3017,12 @@ function loadLevel(levelNumber) {
   resetPlayerPosition();
   rebuildEnemies();
   updateStatusDisplay();
+  syncAudioForGameState();
 }
 
 function resetGame() {
+  stopVictoryMusic(0);
+  stopDeathSound(true);
   currentLevel = 1;
   score = 0;
   lives = STARTING_LIVES;
@@ -2492,6 +3039,7 @@ function resetGame() {
   loadLevel(currentLevel);
   gameState = GAME_STATE.PLAYING;
   updateStatusDisplay();
+  syncAudioForGameState();
 }
 
 function setPlayerNextDirection(direction) {
@@ -2853,6 +3401,7 @@ function startLevelClear() {
   clearGoldenFish();
   endFrenzyMode();
   updateStatusDisplay();
+  syncAudioForGameState();
 }
 
 function advanceToNextLevel() {
@@ -2877,6 +3426,7 @@ function startWin() {
   resetPlayerPosition();
   resetEnemies();
   updateStatusDisplay();
+  playVictoryMusic();
   playSound("win");
 }
 
@@ -3220,6 +3770,7 @@ function loseLife() {
   endFrenzyMode();
   clearGoldenFish();
   lives -= 1;
+  playDeathSound();
   playSound("loseLife");
   updateScoreDisplay();
 
