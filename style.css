@@ -179,6 +179,85 @@ body::before {
   text-shadow: none;
 }
 
+.debug-controls {
+  flex: 0 0 auto;
+  width: min(100%, 900px);
+  margin: 0 auto clamp(8px, 1.4vh, 12px);
+  padding: 8px;
+  color: var(--foam);
+  background: rgba(4, 24, 39, 0.88);
+  border: 1px solid rgba(255, 207, 92, 0.85);
+  border-radius: 6px;
+  box-shadow: 0 0 16px rgba(255, 207, 92, 0.18);
+}
+
+.debug-controls.is-hidden,
+.debug-controls[hidden] {
+  display: none;
+}
+
+.debug-badge {
+  display: inline-block;
+  margin-bottom: 7px;
+  padding: 3px 9px;
+  color: #03111f;
+  font-size: 0.75rem;
+  font-weight: 800;
+  background: var(--gold);
+  border-radius: 4px;
+  box-shadow: 0 0 10px rgba(255, 207, 92, 0.45);
+}
+
+.debug-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.debug-button,
+.debug-level-jump {
+  min-height: 32px;
+  color: var(--foam);
+  font: 700 0.78rem "Trebuchet MS", "Lucida Console", monospace;
+}
+
+.debug-button {
+  padding: 6px 9px;
+  background: rgba(15, 93, 105, 0.78);
+  border: 1px solid rgba(217, 251, 255, 0.55);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.debug-button:hover,
+.debug-button:focus-visible {
+  color: #03111f;
+  background: var(--gold);
+  outline: 2px solid var(--foam);
+  outline-offset: 2px;
+}
+
+.debug-level-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid rgba(217, 251, 255, 0.45);
+  border-radius: 5px;
+}
+
+.debug-level-jump input {
+  width: 58px;
+  color: var(--foam);
+  font: inherit;
+  text-align: center;
+  background: rgba(3, 17, 31, 0.92);
+  border: 1px solid rgba(79, 227, 255, 0.55);
+  border-radius: 4px;
+}
+
 #frenzyValue {
   color: #ffcf5c;
 }
@@ -227,6 +306,10 @@ body::before {
     0 0 24px rgba(79, 227, 255, 0.45),
     0 0 54px rgba(43, 214, 187, 0.2),
     0 0 72px rgba(255, 95, 109, 0.18);
+}
+
+body.debug-mode #gameCanvas {
+  max-height: calc(100dvh - 270px);
 }
 
 @media (max-width: 520px) {

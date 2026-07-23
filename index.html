@@ -39,8 +39,8 @@
         <span id="frenzyValue"></span>
       </div>
       <div class="hud-item is-hidden" id="debugHud">
-        <span class="hud-label">Debug</span>
-        <span id="debugValue">ON</span>
+        <span class="hud-label">Debug Mode</span>
+        <span id="debugValue">ACTIVE</span>
       </div>
     </section>
 
@@ -64,6 +64,28 @@
         Sound: On
       </button>
     </div>
+
+    <section class="debug-controls is-hidden" id="debugControls" aria-label="Debug controls" hidden>
+      <div class="debug-badge">DEBUG MODE</div>
+      <div class="debug-row">
+        <button class="debug-button" id="debugPreviousLevelButton" type="button">Prev Level</button>
+        <button class="debug-button" id="debugNextLevelButton" type="button">Next Level</button>
+        <label class="debug-level-jump" for="debugLevelInput">
+          Level
+          <input id="debugLevelInput" type="number" min="1" max="50" value="1">
+        </label>
+        <button class="debug-button" id="debugJumpLevelButton" type="button">Jump</button>
+        <button class="debug-button" id="debugCompleteLevelButton" type="button">Complete Level</button>
+      </div>
+      <div class="debug-row">
+        <button class="debug-button" id="debugRemoveLifeButton" type="button">- Life</button>
+        <button class="debug-button" id="debugAddLifeButton" type="button">+ Life</button>
+        <button class="debug-button" id="debugExtraLifeButton" type="button">Test Extra Life</button>
+        <button class="debug-button" id="debugFrenzyButton" type="button">Frenzy</button>
+        <button class="debug-button" id="debugDeathButton" type="button">Death</button>
+        <button class="debug-button" id="debugWinButton" type="button">Final Victory</button>
+      </div>
+    </section>
 
     <canvas
       id="gameCanvas"

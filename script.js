@@ -11,11 +11,26 @@ const levelValueElement = document.getElementById("levelValue");
 const frenzyHudElement = document.getElementById("frenzyHud");
 const frenzyValueElement = document.getElementById("frenzyValue");
 const debugHudElement = document.getElementById("debugHud");
+const debugControlsElement = document.getElementById("debugControls");
+const debugPreviousLevelButtonElement = document.getElementById("debugPreviousLevelButton");
+const debugNextLevelButtonElement = document.getElementById("debugNextLevelButton");
+const debugLevelInputElement = document.getElementById("debugLevelInput");
+const debugJumpLevelButtonElement = document.getElementById("debugJumpLevelButton");
+const debugCompleteLevelButtonElement = document.getElementById("debugCompleteLevelButton");
+const debugRemoveLifeButtonElement = document.getElementById("debugRemoveLifeButton");
+const debugAddLifeButtonElement = document.getElementById("debugAddLifeButton");
+const debugExtraLifeButtonElement = document.getElementById("debugExtraLifeButton");
+const debugFrenzyButtonElement = document.getElementById("debugFrenzyButton");
+const debugDeathButtonElement = document.getElementById("debugDeathButton");
+const debugWinButtonElement = document.getElementById("debugWinButton");
 const gameHeaderElement = document.querySelector(".game-header");
 const gameHudElement = document.querySelector(".game-hud");
 const gameControlsElement = document.querySelector(".game-controls");
 const pauseButtonElement = document.getElementById("pauseButton");
 const soundButtonElement = document.getElementById("soundButton");
+const DEBUG_MODE = new URLSearchParams(window.location.search).get("debug") === "1";
+
+document.body.classList.toggle("debug-mode", DEBUG_MODE);
 
 // A tile size of 32 gives us a clear retro maze grid.
 const TILE_SIZE = 32;
@@ -32,10 +47,11 @@ function resizeCanvasDisplay() {
   const headerHeight = gameHeaderElement.offsetHeight;
   const hudHeight = gameHudElement.offsetHeight;
   const controlsHeight = gameControlsElement.offsetHeight;
+  const debugControlsHeight = DEBUG_MODE && debugControlsElement ? debugControlsElement.offsetHeight : 0;
   const availableWidth = Math.max(280, Math.min(1120, window.innerWidth - sidePadding));
   const availableHeight = Math.max(
     240,
-    viewportHeight - headerHeight - hudHeight - controlsHeight - verticalPadding
+    viewportHeight - headerHeight - hudHeight - controlsHeight - debugControlsHeight - verticalPadding
   );
   const scale = Math.min(availableWidth / canvas.width, availableHeight / canvas.height);
 
@@ -72,6 +88,9 @@ const SCORE_VALUES = {
 };
 
 const STARTING_LIVES = 3;
+const MAX_LIVES = 5;
+const EXTRA_LIFE_INTERVAL = 3;
+const EXTRA_LIFE_MESSAGE_MS = 1400;
 const PLAYER_HIT_DISTANCE = 22;
 const PUFFER_INFLATED_HIT_DISTANCE = 30;
 const BASE_FRENZY_DURATION_MS = 7000;
@@ -1838,7 +1857,7 @@ let highScore = loadHighScore();
 let lives = STARTING_LIVES;
 let remainingChum = countRemainingChum();
 let levelChumTotal = remainingChum;
-let debugMode = false;
+let debugMode = DEBUG_MODE;
 let levelClearReady = false;
 let isPaused = false;
 let totalPausedTime = 0;
@@ -1847,6 +1866,15 @@ let pauseStartedGameTime = 0;
 let particles = [];
 let levelClearMessage = "";
 let lastLevelClearMessage = "";
+let awardedExtraLifeLevels = new Set();
+let extraLifeReward = {
+  active: false,
+  startTime: 0,
+  durationMs: EXTRA_LIFE_MESSAGE_MS,
+  level: 0,
+  subtitle: "",
+  lifeCount: STARTING_LIVES,
+};
 let lastSharkBubbleTime = 0;
 let startGameInputPending = false;
 let frenzyMode = {
@@ -1990,6 +2018,10 @@ function loadHighScore() {
 }
 
 function saveHighScore() {
+  if (DEBUG_MODE) {
+    return;
+  }
+
   try {
     window.localStorage.setItem(HIGH_SCORE_STORAGE_KEY, String(highScore));
   } catch (error) {
@@ -3133,6 +3165,62 @@ function updateScore(points) {
   updateScoreDisplay();
 }
 
+function isExtraLifeRewardLevel(completedLevel) {
+  return (
+    Number.isInteger(completedLevel) &&
+    completedLevel > 0 &&
+    completedLevel % EXTRA_LIFE_INTERVAL === 0 &&
+    !isFinalLevel(completedLevel)
+  );
+}
+
+function shouldAwardExtraLife(completedLevel) {
+  return (
+    isExtraLifeRewardLevel(completedLevel) &&
+    lives < MAX_LIVES &&
+    !awardedExtraLifeLevels.has(completedLevel)
+  );
+}
+
+function resetExtraLifeReward() {
+  extraLifeReward = {
+    active: false,
+    startTime: 0,
+    durationMs: EXTRA_LIFE_MESSAGE_MS,
+    level: 0,
+    subtitle: "",
+    lifeCount: lives,
+  };
+}
+
+function awardExtraLifeIfEligible(completedLevel) {
+  if (!isExtraLifeRewardLevel(completedLevel) || awardedExtraLifeLevels.has(completedLevel)) {
+    return false;
+  }
+
+  const canAwardLife = shouldAwardExtraLife(completedLevel);
+  awardedExtraLifeLevels.add(completedLevel);
+
+  if (!canAwardLife) {
+    return false;
+  }
+
+  lives = Math.min(MAX_LIVES, lives + 1);
+  extraLifeReward = {
+    active: true,
+    startTime: getGameTime(),
+    durationMs: EXTRA_LIFE_MESSAGE_MS,
+    level: completedLevel,
+    subtitle: `Level ${completedLevel} reward`,
+    lifeCount: lives,
+  };
+
+  playSound("bonusFish");
+  spawnExtraLifeParticles(canvas.width / 2, canvas.height / 2 - 20);
+  updateStatusDisplay();
+  return true;
+}
+
 function updateScoreDisplay() {
   scoreValueElement.textContent = score;
   highScoreValueElement.textContent = highScore;
@@ -3141,11 +3229,32 @@ function updateScoreDisplay() {
   levelValueElement.textContent = currentLevel;
 }
 
+function updateDebugLevelInput() {
+  if (!debugLevelInputElement) {
+    return;
+  }
+
+  debugLevelInputElement.max = String(getLevelCount());
+  debugLevelInputElement.value = String(currentLevel);
+}
+
 function updateDebugDisplay() {
-  if (debugMode) {
+  const isDebugVisible = DEBUG_MODE && debugMode;
+
+  if (isDebugVisible) {
     debugHudElement.classList.remove("is-hidden");
   } else {
     debugHudElement.classList.add("is-hidden");
+  }
+
+  if (debugControlsElement) {
+    debugControlsElement.hidden = !isDebugVisible;
+    debugControlsElement.classList.toggle("is-hidden", !isDebugVisible);
+    debugControlsElement.setAttribute("aria-hidden", String(!isDebugVisible));
+  }
+
+  if (isDebugVisible) {
+    updateDebugLevelInput();
   }
 }
 
@@ -3216,17 +3325,35 @@ function getVictoryProgress(startMs, endMs) {
   return Math.max(0, Math.min(1, (elapsed - startMs) / (endMs - startMs)));
 }
 
-// Debug mode is intentionally simple and local-test friendly. It hides enemies,
-// stops enemy movement, and skips enemy collision without changing collectibles
-// or level progression.
-function toggleDebugMode() {
-  debugMode = !debugMode;
-  updateDebugDisplay();
+// Debug mode is URL-gated so production players do not see testing controls.
+// Jumping levels never awards extra lives; completing a level uses the normal
+// completion flow and can award one eligible every-third-level reward.
+function canUseDebugTools() {
+  return DEBUG_MODE && debugMode;
+}
+
+function debugJumpToLevel(levelNumber) {
+  if (!canUseDebugTools()) {
+    return;
+  }
+
+  resetDeathAnimation();
+  resetVictoryAnimation();
+  stopVictoryMusic(0);
+  stopDeathSound(true);
+  isPaused = false;
+  gameState = GAME_STATE.PLAYING;
+  loadLevel(clampLevelNumber(levelNumber));
+  updateStatusDisplay();
   resizeCanvasDisplay();
 }
 
-function debugClearCurrentLevel() {
-  if (!debugMode || gameState !== GAME_STATE.PLAYING || isPaused) {
+function debugChangeLevel(delta) {
+  debugJumpToLevel(currentLevel + delta);
+}
+
+function debugCompleteCurrentLevel() {
+  if (!canUseDebugTools() || gameState !== GAME_STATE.PLAYING || isPaused) {
     return;
   }
 
@@ -3235,6 +3362,81 @@ function debugClearCurrentLevel() {
   remainingChum = 0;
   updateStatusDisplay();
   startLevelClear();
+}
+
+function debugAdjustLives(delta) {
+  if (!canUseDebugTools()) {
+    return;
+  }
+
+  lives = Math.max(0, Math.min(MAX_LIVES, lives + delta));
+  updateStatusDisplay();
+}
+
+function debugTriggerExtraLifeReward() {
+  if (!canUseDebugTools() || lives >= MAX_LIVES) {
+    return;
+  }
+
+  if (gameState !== GAME_STATE.PLAYING && gameState !== GAME_STATE.LEVEL_CLEAR) {
+    debugJumpToLevel(currentLevel);
+  }
+
+  lives = Math.min(MAX_LIVES, lives + 1);
+  extraLifeReward = {
+    active: true,
+    startTime: getGameTime(),
+    durationMs: EXTRA_LIFE_MESSAGE_MS,
+    level: currentLevel,
+    subtitle: "Debug reward test",
+    lifeCount: lives,
+  };
+
+  playSound("bonusFish");
+  spawnExtraLifeParticles(canvas.width / 2, canvas.height / 2 - 20);
+  updateStatusDisplay();
+}
+
+function debugEnsurePlaying() {
+  if (!canUseDebugTools()) {
+    return false;
+  }
+
+  if (gameState !== GAME_STATE.PLAYING) {
+    debugJumpToLevel(currentLevel);
+  }
+
+  return gameState === GAME_STATE.PLAYING;
+}
+
+function debugTriggerFrenzy() {
+  if (!debugEnsurePlaying() || isPaused) {
+    return;
+  }
+
+  startFrenzyMode();
+}
+
+function debugTriggerPlayerDeath() {
+  if (!debugEnsurePlaying() || isPaused || deathAnimation.active) {
+    return;
+  }
+
+  loseLife();
+}
+
+function debugJumpToFinalVictory() {
+  if (!canUseDebugTools()) {
+    return;
+  }
+
+  resetDeathAnimation();
+  stopDeathSound(true);
+  isPaused = false;
+  gameState = GAME_STATE.PLAYING;
+  loadLevel(getLevelCount());
+  startWin();
+  updateStatusDisplay();
 }
 
 function updateFrenzyDisplay() {
@@ -3483,6 +3685,7 @@ function isFrenzyEndingSoon() {
 function loadLevel(levelNumber) {
   resetDeathAnimation();
   stopDeathSound(true);
+  resetExtraLifeReward();
   currentLevel = clampLevelNumber(levelNumber);
   currentLayout = getLevelConfig(currentLevel);
   maze = cloneMaze(currentLayout.maze);
@@ -3510,7 +3713,8 @@ function resetGame() {
   currentLevel = 1;
   score = 0;
   lives = STARTING_LIVES;
-  debugMode = false;
+  awardedExtraLifeLevels = new Set();
+  debugMode = DEBUG_MODE;
   isPaused = false;
   totalPausedTime = 0;
   pauseStartedRealTime = 0;
@@ -3518,6 +3722,7 @@ function resetGame() {
   levelClearReady = false;
   particles = [];
   levelClearMessage = "";
+  resetExtraLifeReward();
   lastSharkBubbleTime = 0;
   resetGoldenFish();
   loadLevel(currentLevel);
@@ -3882,6 +4087,7 @@ function startLevelClear() {
   player.direction = null;
   player.nextDirection = null;
   updateScore(LEVEL_CLEAR_BONUS * currentLevel);
+  awardExtraLifeIfEligible(currentLevel);
   playSound("levelClear");
   spawnLevelClearParticles();
   clearGoldenFish();
@@ -4627,6 +4833,34 @@ function spawnGoldenFishParticles(x, y) {
     duration: 820,
     color: "#ffcf5c",
     text: `+${SCORE_VALUES.GOLDEN_FISH}`,
+  });
+}
+
+function spawnExtraLifeParticles(x, y) {
+  spawnBurst(x, y, 22, ["#ffcf5c", "#4fe3ff", "#ff7a9a", "#fff4a8"], {
+    minSpeed: 22,
+    speedRange: 44,
+    minSize: 2,
+    sizeRange: 3.6,
+    duration: 780,
+  });
+
+  addParticle({
+    type: "ring",
+    x,
+    y,
+    size: 18,
+    duration: 700,
+    color: "rgba(255, 207, 92, 0.92)",
+  });
+
+  addParticle({
+    type: "ring",
+    x,
+    y,
+    size: 30,
+    duration: 900,
+    color: "rgba(79, 227, 255, 0.65)",
   });
 }
 
@@ -7153,8 +7387,91 @@ function drawLevelClearOverlay() {
   });
 }
 
+function drawExtraLifeIcon(x, y, scale = 1, alpha = 1) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.globalAlpha *= alpha;
+  ctx.shadowColor = "rgba(255, 207, 92, 0.82)";
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = "#ff5f8f";
+  ctx.beginPath();
+  ctx.moveTo(0, 14);
+  ctx.bezierCurveTo(-24, -3, -18, -22, -3, -12);
+  ctx.bezierCurveTo(0, -20, 19, -24, 22, -5);
+  ctx.bezierCurveTo(24, 7, 12, 17, 0, 24);
+  ctx.bezierCurveTo(-10, 18, -18, 14, 0, 14);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "rgba(255, 244, 168, 0.9)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255, 244, 168, 0.92)";
+  ctx.beginPath();
+  ctx.arc(-7, -8, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawExtraLifeRewardOverlay() {
+  if (!extraLifeReward.active) {
+    return;
+  }
+
+  const elapsed = getGameTime() - extraLifeReward.startTime;
+  const progress = Math.max(0, Math.min(1, elapsed / extraLifeReward.durationMs));
+
+  if (progress >= 1) {
+    extraLifeReward.active = false;
+    return;
+  }
+
+  const fadeIn = Math.min(1, progress / 0.18);
+  const fadeOut = progress > 0.78 ? Math.max(0, 1 - (progress - 0.78) / 0.22) : 1;
+  const alpha = easeIntroProgress(fadeIn) * fadeOut;
+  const popProgress = Math.min(1, progress / 0.34);
+  const scale = 0.84 + easeIntroOutBack(popProgress) * 0.16;
+  const pulse = 0.5 + Math.sin(progress * Math.PI * 5) * 0.5;
+  const badgeWidth = 330;
+  const badgeHeight = 88;
+  const badgeX = canvas.width / 2 - badgeWidth / 2;
+  const badgeY = canvas.height / 2 - 42;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(canvas.width / 2, badgeY + badgeHeight / 2);
+  ctx.scale(scale, scale);
+  ctx.translate(-canvas.width / 2, -(badgeY + badgeHeight / 2));
+  ctx.shadowColor = "rgba(255, 207, 92, 0.75)";
+  ctx.shadowBlur = 18 + pulse * 8;
+  ctx.fillStyle = "rgba(7, 27, 54, 0.94)";
+  drawRoundedRect(badgeX, badgeY, badgeWidth, badgeHeight, 12);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = `rgba(255, 207, 92, ${0.72 + pulse * 0.2})`;
+  ctx.lineWidth = 2;
+  drawRoundedRect(badgeX + 2, badgeY + 2, badgeWidth - 4, badgeHeight - 4, 10);
+
+  drawExtraLifeIcon(badgeX + 55, badgeY + 43, 0.82 + pulse * 0.08);
+  drawCenteredText("EXTRA LIFE!", canvas.width / 2 + 38, badgeY + 29, {
+    color: "#ffcf5c",
+    font: "bold 27px Trebuchet MS, Lucida Console, monospace",
+    glowColor: "rgba(255, 207, 92, 0.88)",
+    glowBlur: 8 + pulse * 5,
+  });
+  drawCenteredText(extraLifeReward.subtitle || `Every ${EXTRA_LIFE_INTERVAL} levels`, canvas.width / 2 + 38, badgeY + 54, {
+    color: "#d9fbff",
+    font: "bold 14px Trebuchet MS, Lucida Console, monospace",
+  });
+  drawCenteredText(`Lives: ${extraLifeReward.lifeCount}/${MAX_LIVES}`, canvas.width / 2 + 38, badgeY + 73, {
+    color: "#ffd4c7",
+    font: "bold 13px Trebuchet MS, Lucida Console, monospace",
+  });
+  ctx.restore();
+}
+
 function drawLevelClearScreen() {
   drawLevelClearOverlay();
+  drawExtraLifeRewardOverlay();
 }
 
 function drawCelebrationConfetti(progress = 1) {
@@ -7466,6 +7783,7 @@ function gameLoop() {
 
     drawParticles();
     drawFrenzyEffects();
+    drawExtraLifeRewardOverlay();
 
     if (isPaused) {
       drawPauseOverlay();
@@ -7493,15 +7811,9 @@ function gameLoop() {
 window.addEventListener("keydown", (event) => {
   const direction = KEY_TO_DIRECTION[event.code];
 
-  if (event.code === "Backquote") {
+  if (canUseDebugTools() && event.code === "KeyL") {
     event.preventDefault();
-    toggleDebugMode();
-    return;
-  }
-
-  if (event.code === "KeyL") {
-    event.preventDefault();
-    debugClearCurrentLevel();
+    debugCompleteCurrentLevel();
     return;
   }
 
@@ -7527,6 +7839,22 @@ canvas.addEventListener("pointerdown", unlockStartScreenAudio);
 canvas.addEventListener("click", startGame);
 pauseButtonElement.addEventListener("click", togglePause);
 soundButtonElement.addEventListener("click", toggleMute);
+
+if (DEBUG_MODE) {
+  debugPreviousLevelButtonElement.addEventListener("click", () => debugChangeLevel(-1));
+  debugNextLevelButtonElement.addEventListener("click", () => debugChangeLevel(1));
+  debugJumpLevelButtonElement.addEventListener("click", () => {
+    const requestedLevel = Number.parseInt(debugLevelInputElement.value, 10);
+    debugJumpToLevel(Number.isFinite(requestedLevel) ? requestedLevel : currentLevel);
+  });
+  debugCompleteLevelButtonElement.addEventListener("click", debugCompleteCurrentLevel);
+  debugRemoveLifeButtonElement.addEventListener("click", () => debugAdjustLives(-1));
+  debugAddLifeButtonElement.addEventListener("click", () => debugAdjustLives(1));
+  debugExtraLifeButtonElement.addEventListener("click", debugTriggerExtraLifeReward);
+  debugFrenzyButtonElement.addEventListener("click", debugTriggerFrenzy);
+  debugDeathButtonElement.addEventListener("click", debugTriggerPlayerDeath);
+  debugWinButtonElement.addEventListener("click", debugJumpToFinalVictory);
+}
 
 let touchStartX = 0;
 let touchStartY = 0;

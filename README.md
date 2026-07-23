@@ -18,7 +18,7 @@ CHOMP is a retro shark maze arcade game built with plain HTML, CSS, and JavaScri
 - Frenzy Mode from Frenzy Bait, with vulnerable enemies and bonus points.
 - Larger responsive arcade display for desktop, tablets, and phones.
 - Data-driven level progression with Level Clear and animated final victory celebration screens.
-- Debug mode for faster local testing.
+- URL-gated debug mode for intentional development testing.
 - No external libraries.
 
 ## Scoring
@@ -26,6 +26,7 @@ CHOMP is a retro shark maze arcade game built with plain HTML, CSS, and JavaScri
 - Chum is worth 10 points.
 - Frenzy Bait is worth 50 points.
 - Golden Fish is worth 500 bonus points and is not required to clear a level.
+- Clearing every third level awards one extra life, up to a maximum of 5 lives. Level 50 does not award an extra life because it ends the run.
 - Collected items disappear from the maze.
 - Chomping a vulnerable enemy during Frenzy Mode starts at 200 bonus points.
 - Each additional chomp in the same Frenzy Mode doubles up to 1600 points.
@@ -74,7 +75,7 @@ CHOMP is a retro shark maze arcade game built with plain HTML, CSS, and JavaScri
 ## Levels
 
 - The game currently has 50 configured levels.
-- The level data is organized so future updates can add more levels without new gameplay functions.
+- The level data is organized for maintenance, validation, and balance tuning without changing gameplay functions.
 - Level 50 is the final configured level and completes the full CHOMP level roadmap.
 - Collecting all chum clears the current level. Frenzy Bait is optional for clearing.
 - Score and lives carry forward between levels.
@@ -168,10 +169,18 @@ When the game loads, it validates configured levels in the browser console. Vali
 
 ## Debug Mode
 
-- Press Backquote (`) to toggle Debug Mode.
-- When Debug Mode is on, enemies are hidden, do not move, and cannot collide with the shark.
-- Press `L` while Debug Mode is on to instantly clear the current level.
-- Debug Mode is for local testing and does not remove collectibles or skip score/life reset behavior.
+Debug tools are hidden during normal play. To enable development controls, open the game with `?debug=1`:
+
+```text
+https://jrooney77.github.io/chomp-arcade/?debug=1
+```
+
+- Debug Mode is off by default and is only enabled by the URL flag.
+- When Debug Mode is active, a small `DEBUG MODE` badge and debug control panel appear.
+- Debug controls can jump between levels, jump directly to a chosen level, complete the current level, add or remove lives, test the extra-life reward, trigger Frenzy, trigger player death, and jump to final victory.
+- Level jumping does not award extra lives.
+- Complete Level uses the normal level-clear flow, including eligible every-third-level extra-life rewards. Each eligible level can reward at most once per run.
+- High-score saving is disabled while Debug Mode is active, so test scores do not overwrite real saved scores.
 
 ## Maze Grid
 
@@ -211,5 +220,5 @@ To test the game:
 12. Touch enemies outside Frenzy Mode and confirm lives decrease.
 13. Lose all lives, then press Space or tap to restart.
 14. Try the game in a narrow browser window or on a phone and confirm the canvas stays centered and playable.
-15. Press Backquote (`), then `L` to quickly test Level Clear, level progression, and the final victory screen.
+15. For development testing, open the game with `?debug=1` and use the debug controls to test Level Clear, level progression, extra-life rewards, and the final victory screen.
 16. On the final victory screen, press Space, click, or tap to replay from Level 1.
