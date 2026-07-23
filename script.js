@@ -17,6 +17,7 @@ const gameControlsElement = document.querySelector(".game-controls");
 const pauseButtonElement = document.getElementById("pauseButton");
 const soundButtonElement = document.getElementById("soundButton");
 const testAudioButtonElement = document.getElementById("testAudioButton");
+const testMainWavButtonElement = document.getElementById("testMainWavButton");
 const audioDiagnosticOutputElement = document.getElementById("audioDiagnosticOutput");
 
 // A tile size of 32 gives us a clear retro maze grid.
@@ -99,12 +100,12 @@ const DEFAULT_GOLDEN_FISH_SETTINGS = {
 };
 const HIGH_SCORE_STORAGE_KEY = "chompHighScore";
 const SOUND_MUTED_STORAGE_KEY = "chompSoundMuted";
-const MASTER_VOLUME = 0.65;
+const MASTER_VOLUME = 0.8;
 const GENERATED_SFX_GAIN = 1;
-const MAIN_MUSIC_GAIN = 0.45;
-const FRENZY_MUSIC_GAIN = 0.5;
-const DEATH_SOUND_GAIN = 0.85;
-const VICTORY_MUSIC_GAIN = 0.6;
+const MAIN_MUSIC_GAIN = 0.5;
+const FRENZY_MUSIC_GAIN = 0.55;
+const DEATH_SOUND_GAIN = 0.9;
+const VICTORY_MUSIC_GAIN = 0.65;
 const AUDIO_DEBUG_ENABLED = true;
 const MUSIC_FADE_SECONDS = 0.45;
 const QUICK_MUSIC_FADE_SECONDS = 0.18;
@@ -1948,6 +1949,7 @@ let victoryMusicSource = null;
 let victoryMusicGain = null;
 let pendingDeathSoundPlayback = false;
 let pendingVictoryMusicPlayback = false;
+let didLogGameStartAudioSnapshot = false;
 
 function saveSoundMuted() {
   try {
@@ -2002,6 +2004,28 @@ function getAudioDiagnosticSnapshot() {
     audioContextState: audioContext ? audioContext.state : null,
     gameState,
   };
+}
+
+function logGameStartAudioSnapshot() {
+  if (didLogGameStartAudioSnapshot) {
+    return;
+  }
+
+  const hasMainBuffer = Boolean(loadedAudioBuffers.main);
+  const hasMainMusicSource = Boolean(mainMusicSource);
+
+  didLogGameStartAudioSnapshot = hasMainBuffer || hasMainMusicSource;
+  console.info("[CHOMP audio] Game-start audio snapshot", {
+    audioContextState: audioContext ? audioContext.state : null,
+    audioUnlocked,
+    isSoundMuted,
+    masterGain: masterGain ? masterGain.gain.value : null,
+    sfxGain: sfxGain ? sfxGain.gain.value : null,
+    mainMusicGain: mainMusicGain ? mainMusicGain.gain.value : null,
+    gameState,
+    hasMainBuffer,
+    hasMainMusicSource,
+  });
 }
 
 // TEMP AUDIO DIAGNOSTIC: direct user-gesture playback path for WAV debugging.
@@ -2069,18 +2093,82 @@ async function handleTestAudioClick() {
   }
 }
 
+// TEMP AUDIO DIAGNOSTIC: direct main WAV playback bypassing the CHOMP manager.
+async function handleTestMainWavClick() {
+  const diagnostics = document.getElementById("audioDiagnosticOutput");
+
+  diagnostics.textContent = "TEST MAIN WAV CLICK RECEIVED";
+  diagnostics.classList.add("has-output");
+  console.log("TEST MAIN WAV CLICK RECEIVED");
+
+  const appendDiagnostic = (message, details = null) => {
+    const detailText = details ? ` ${JSON.stringify(details)}` : "";
+    diagnostics.textContent += `\n${message}${detailText}`;
+    console.log(`[CHOMP TEST MAIN WAV] ${message}`, details || "");
+  };
+
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+    if (!AudioContextClass) {
+      throw new Error("Web Audio API is unavailable.");
+    }
+
+    audioContext = audioContext || new AudioContextClass();
+
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+
+    appendDiagnostic("AudioContext ready", { state: audioContext.state });
+
+    if (audioContext.state !== "running") {
+      throw new Error(`AudioContext did not reach running state. Current state: ${audioContext.state}`);
+    }
+
+    const wavPath = AUDIO_ASSETS.main.path;
+    const response = await fetch(wavPath);
+
+    appendDiagnostic("Main WAV fetch status", {
+      path: wavPath,
+      status: response.status,
+      ok: response.ok,
+    });
+
+    if (!response.ok) {
+      throw new Error(`${wavPath} returned HTTP ${response.status}`);
+    }
+
+    const wavBytes = await response.arrayBuffer();
+    appendDiagnostic("Main WAV bytes received", { bytes: wavBytes.byteLength });
+
+    const decodedBuffer = await decodeAudioArrayBuffer(wavBytes);
+    appendDiagnostic("Main WAV decoded", { duration: `${decodedBuffer.duration.toFixed(2)}s` });
+
+    const source = audioContext.createBufferSource();
+    const gain = audioContext.createGain();
+
+    source.buffer = decodedBuffer;
+    gain.gain.setValueAtTime(0.8, audioContext.currentTime);
+    source.connect(gain);
+    gain.connect(audioContext.destination);
+    source.start();
+    source.stop(audioContext.currentTime + 5);
+    appendDiagnostic("Main WAV direct playback started", { seconds: 5 });
+  } catch (error) {
+    appendDiagnostic("ERROR", {
+      name: error.name,
+      message: error.message,
+    });
+  }
+}
+
 function resumeAudioContext() {
   if (!audioContext || audioContext.state !== "suspended") {
     return Promise.resolve();
   }
 
-  return audioContext.resume()
-    .then(() => {
-      syncAudioForGameState();
-    })
-    .catch((error) => {
-      console.warn("CHOMP audio could not resume yet.", error);
-    });
+  return audioContext.resume();
 }
 
 function createAudioBus() {
@@ -2114,7 +2202,14 @@ function createAudioBus() {
 // unlocks only after the player chooses to interact with the game.
 function initAudio() {
   if (audioUnlocked) {
-    syncAudioForGameState();
+    resumeAudioContext()
+      .then(() => loadAudioBuffers())
+      .then(() => {
+        syncAudioForGameState();
+      })
+      .catch((error) => {
+        console.warn("CHOMP audio could not resume or synchronize.", error);
+      });
     return true;
   }
 
@@ -2126,18 +2221,29 @@ function initAudio() {
     }
 
     audioContext = audioContext || new AudioContextClass();
-    masterGain = masterGain || audioContext.createGain();
+    if (!masterGain) {
+      masterGain = audioContext.createGain();
+      masterGain.connect(audioContext.destination);
+    }
+
     masterGain.gain.value = isSoundMuted ? 0 : MASTER_VOLUME;
-    masterGain.connect(audioContext.destination);
-    sfxGain = sfxGain || audioContext.createGain();
+    if (!sfxGain) {
+      sfxGain = audioContext.createGain();
+      sfxGain.connect(masterGain);
+    }
+
     sfxGain.gain.value = GENERATED_SFX_GAIN;
-    sfxGain.connect(masterGain);
     audioBus = audioBus || createAudioBus();
 
     audioUnlocked = true;
-    loadAudioBuffers();
-    resumeAudioContext();
-    syncAudioForGameState();
+    resumeAudioContext()
+      .then(() => loadAudioBuffers())
+      .then(() => {
+        syncAudioForGameState();
+      })
+      .catch((error) => {
+        console.warn("CHOMP audio could not initialize playback.", error);
+      });
     return true;
   } catch (error) {
     return false;
@@ -2208,7 +2314,6 @@ function loadAudioBuffers() {
           playVictoryMusic();
         }
 
-        syncAudioForGameState();
         return audioBuffer;
       })
       .catch((error) => {
@@ -2219,10 +2324,7 @@ function loadAudioBuffers() {
         loadedAudioBuffers[key] = null;
         return null;
       });
-  })).then(() => {
-    syncAudioForGameState();
-    return loadedAudioBuffers;
-  });
+  })).then(() => loadedAudioBuffers);
 
   return audioLoadPromise;
 }
@@ -2292,6 +2394,10 @@ function getMusicVolume(trackKey, ratio = 1) {
 
 function ensureLoopingSource(trackKey) {
   const buffer = loadedAudioBuffers[trackKey];
+
+  if (!audioContext || audioContext.state !== "running") {
+    return null;
+  }
 
   if (!audioContext || !buffer) {
     loadAudioBuffers();
@@ -2580,12 +2686,11 @@ function syncAudioForGameState() {
     return;
   }
 
-  loadAudioBuffers();
-
-  if (audioContext.state === "suspended") {
-    resumeAudioContext();
+  if (audioContext.state !== "running") {
     return;
   }
+
+  loadAudioBuffers();
 
   if (isPaused) {
     fadeMainMusic(0, QUICK_MUSIC_FADE_SECONDS);
@@ -2631,6 +2736,7 @@ function syncAudioForGameState() {
     stopVictoryMusic(QUICK_MUSIC_FADE_SECONDS);
     stopFrenzyMusic(QUICK_MUSIC_FADE_SECONDS);
     startMainMusic(1, MUSIC_FADE_SECONDS);
+    logGameStartAudioSnapshot();
   }
 }
 
@@ -5821,6 +5927,7 @@ canvas.addEventListener("click", startGame);
 pauseButtonElement.addEventListener("click", togglePause);
 soundButtonElement.addEventListener("click", toggleMute);
 testAudioButtonElement.addEventListener("click", handleTestAudioClick);
+testMainWavButtonElement.addEventListener("click", handleTestMainWavClick);
 
 let touchStartX = 0;
 let touchStartY = 0;
