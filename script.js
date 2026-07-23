@@ -16,6 +16,8 @@ const gameHudElement = document.querySelector(".game-hud");
 const gameControlsElement = document.querySelector(".game-controls");
 const pauseButtonElement = document.getElementById("pauseButton");
 const soundButtonElement = document.getElementById("soundButton");
+const testAudioButtonElement = document.getElementById("testAudioButton");
+const audioDiagnosticOutputElement = document.getElementById("audioDiagnosticOutput");
 
 // A tile size of 32 gives us a clear retro maze grid.
 const TILE_SIZE = 32;
@@ -1972,6 +1974,121 @@ function logAudioDebug(message, details = null) {
   }
 }
 
+function appendAudioDiagnosticLine(message, details = null) {
+  const detailText = details ? ` ${JSON.stringify(details)}` : "";
+  const line = `${message}${detailText}`;
+
+  audioDiagnosticOutputElement.classList.add("has-output");
+  audioDiagnosticOutputElement.textContent += `${line}\n`;
+  console.info(`[CHOMP TEST AUDIO] ${line}`);
+}
+
+function getAudioDiagnosticSnapshot() {
+  let savedMuteValue = null;
+
+  try {
+    savedMuteValue = window.localStorage.getItem(SOUND_MUTED_STORAGE_KEY);
+  } catch (error) {
+    savedMuteValue = `unavailable: ${error.message}`;
+  }
+
+  return {
+    isSoundMuted,
+    savedMuteValue,
+    MASTER_VOLUME,
+    masterGain: masterGain ? masterGain.gain.value : null,
+    sfxGain: sfxGain ? sfxGain.gain.value : null,
+    audioUnlocked,
+    audioContextState: audioContext ? audioContext.state : null,
+    gameState,
+  };
+}
+
+// TEMP AUDIO DIAGNOSTIC: direct user-gesture playback path for WAV debugging.
+async function handleTestAudioClick() {
+  audioDiagnosticOutputElement.textContent = "";
+  audioDiagnosticOutputElement.classList.add("has-output");
+  appendAudioDiagnosticLine("Initial audio snapshot", getAudioDiagnosticSnapshot());
+
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+  if (!AudioContextClass) {
+    appendAudioDiagnosticLine("ERROR", { message: "Web Audio API is unavailable in this browser." });
+    return;
+  }
+
+  try {
+    audioContext = audioContext || new AudioContextClass();
+    appendAudioDiagnosticLine("AudioContext created", {
+      sampleRate: audioContext.sampleRate,
+      state: audioContext.state,
+    });
+
+    if (!masterGain) {
+      masterGain = audioContext.createGain();
+      masterGain.connect(audioContext.destination);
+    }
+
+    masterGain.gain.cancelScheduledValues(audioContext.currentTime);
+    masterGain.gain.setValueAtTime(0.8, audioContext.currentTime);
+
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+
+    appendAudioDiagnosticLine(`AudioContext state: ${audioContext.state}`);
+
+    const beepOscillator = audioContext.createOscillator();
+    const beepGain = audioContext.createGain();
+    const beepStart = audioContext.currentTime;
+    const beepEnd = beepStart + 0.18;
+
+    beepOscillator.type = "sine";
+    beepOscillator.frequency.setValueAtTime(880, beepStart);
+    beepGain.gain.setValueAtTime(0.0001, beepStart);
+    beepGain.gain.exponentialRampToValueAtTime(0.8, beepStart + 0.02);
+    beepGain.gain.exponentialRampToValueAtTime(0.0001, beepEnd);
+    beepOscillator.connect(beepGain);
+    beepGain.connect(masterGain);
+    beepOscillator.start(beepStart);
+    beepOscillator.stop(beepEnd + 0.02);
+    appendAudioDiagnosticLine("Test beep started");
+
+    const wavPath = AUDIO_ASSETS.death.path;
+    const response = await fetch(wavPath);
+    appendAudioDiagnosticLine("WAV fetch status", {
+      path: wavPath,
+      status: response.status,
+      ok: response.ok,
+    });
+
+    if (!response.ok) {
+      throw new Error(`${wavPath} returned HTTP ${response.status}`);
+    }
+
+    const wavBytes = await response.arrayBuffer();
+    appendAudioDiagnosticLine("WAV bytes received", { bytes: wavBytes.byteLength });
+
+    const decodedBuffer = await decodeAudioArrayBuffer(wavBytes);
+    appendAudioDiagnosticLine("WAV decoded", { duration: `${decodedBuffer.duration.toFixed(2)}s` });
+
+    const wavSource = audioContext.createBufferSource();
+    const wavGain = audioContext.createGain();
+
+    wavSource.buffer = decodedBuffer;
+    wavGain.gain.setValueAtTime(0.8, audioContext.currentTime);
+    wavSource.connect(wavGain);
+    wavGain.connect(masterGain);
+    wavSource.start();
+    appendAudioDiagnosticLine("WAV playback started");
+  } catch (error) {
+    appendAudioDiagnosticLine("ERROR", {
+      name: error.name,
+      message: error.message,
+    });
+  }
+}
+
 function resumeAudioContext() {
   if (!audioContext || audioContext.state !== "suspended") {
     return Promise.resolve();
@@ -2049,13 +2166,11 @@ function initAudio() {
 
 function decodeAudioArrayBuffer(arrayBuffer) {
   return new Promise((resolve, reject) => {
-    const handleSuccess = (buffer) => resolve(buffer);
-    const handleFailure = (error) => reject(error);
-    const decodeResult = audioContext.decodeAudioData(arrayBuffer, handleSuccess, handleFailure);
-
-    if (decodeResult && typeof decodeResult.then === "function") {
-      decodeResult.then(handleSuccess).catch(handleFailure);
-    }
+    audioContext.decodeAudioData(
+      arrayBuffer,
+      (buffer) => resolve(buffer),
+      (error) => reject(error)
+    );
   });
 }
 
@@ -5725,6 +5840,7 @@ window.addEventListener("keydown", (event) => {
 canvas.addEventListener("click", startGame);
 pauseButtonElement.addEventListener("click", togglePause);
 soundButtonElement.addEventListener("click", toggleMute);
+testAudioButtonElement.addEventListener("click", handleTestAudioClick);
 
 let touchStartX = 0;
 let touchStartY = 0;
