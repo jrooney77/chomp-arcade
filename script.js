@@ -141,6 +141,7 @@ const AUDIO_ASSETS = {
     loop: false,
   },
 };
+const AUDIO_STATUS_FONT = "bold 12px Trebuchet MS, Lucida Console, monospace";
 const REVERB_ENABLED = true;
 const REVERB_DELAY_SECONDS = 0.12;
 const REVERB_FEEDBACK = 0.22;
@@ -1881,8 +1882,8 @@ let enemies = enemyStarts.map((enemyStart) => (
   createEnemy(enemyStart.type, enemyStart.row, enemyStart.col, enemyStart.direction)
 ));
 
-function startGame() {
-  initAudio();
+async function startGame() {
+  await initAudio();
 
   if (gameState === GAME_STATE.START) {
     playSound("select");
@@ -1964,6 +1965,7 @@ let pendingVictoryMusicPlayback = false;
 let mediaAudioTracks = {};
 let lastMediaFrenzyPlaybackRate = 1;
 let lastMediaFrenzyRateUpdateTime = 0;
+let lastAudioError = "";
 
 function saveSoundMuted() {
   try {
@@ -1996,12 +1998,43 @@ function getMediaElementErrorDetails(mediaElement) {
   };
 }
 
+function noteAudioError(message, error = null) {
+  lastAudioError = error && error.message ? `${message}: ${error.message}` : message;
+}
+
 function resumeAudioContext() {
-  if (!audioContext || audioContext.state !== "suspended") {
-    return Promise.resolve();
+  if (!audioContext) {
+    return Promise.resolve(false);
   }
 
-  return audioContext.resume();
+  if (audioContext.state === "running") {
+    console.info("[CHOMP audio] AudioContext resume result", { state: audioContext.state, didResume: true });
+    return Promise.resolve(true);
+  }
+
+  if (audioContext.state !== "suspended") {
+    noteAudioError(`AudioContext cannot resume from state ${audioContext.state}`);
+    console.warn("[CHOMP audio] AudioContext resume failed.", { state: audioContext.state });
+    return Promise.resolve(false);
+  }
+
+  return audioContext.resume()
+    .then(() => {
+      const didResume = audioContext.state === "running";
+
+      console.info("[CHOMP audio] AudioContext resume result", { state: audioContext.state, didResume });
+
+      if (!didResume) {
+        noteAudioError(`AudioContext resume left state ${audioContext.state}`);
+      }
+
+      return didResume;
+    })
+    .catch((error) => {
+      noteAudioError("AudioContext resume failed", error);
+      console.warn("[CHOMP audio] AudioContext resume failed.", error);
+      return false;
+    });
 }
 
 function createAudioBus() {
@@ -2030,30 +2063,20 @@ function createAudioBus() {
   return { dryGain, wetInput };
 }
 
-// Browsers, especially iPhone Safari, block audio until a user gesture happens.
-// initAudio() is called from Space, tap, click, and button handlers so sound
-// unlocks only after the player chooses to interact with the game.
-function initAudio() {
-  if (audioUnlocked) {
-    resumeAudioContext()
-      .then(() => loadAudioBuffers())
-      .then(() => {
-        syncAudioForGameState();
-      })
-      .catch((error) => {
-        console.warn("CHOMP audio could not resume or synchronize.", error);
-      });
-    return true;
-  }
-
+function ensureAudioContext() {
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
 
     if (!AudioContextClass) {
+      noteAudioError("Web Audio API is unavailable");
       return false;
     }
 
-    audioContext = audioContext || new AudioContextClass();
+    if (!audioContext) {
+      audioContext = new AudioContextClass();
+      console.info("[CHOMP audio] AudioContext created", { state: audioContext.state });
+    }
+
     if (!masterGain) {
       masterGain = audioContext.createGain();
       masterGain.connect(audioContext.destination);
@@ -2068,19 +2091,33 @@ function initAudio() {
     sfxGain.gain.value = GENERATED_SFX_GAIN;
     audioBus = audioBus || createAudioBus();
 
-    audioUnlocked = true;
-    resumeAudioContext()
-      .then(() => loadAudioBuffers())
-      .then(() => {
-        syncAudioForGameState();
-      })
-      .catch((error) => {
-        console.warn("CHOMP audio could not initialize playback.", error);
-      });
     return true;
   } catch (error) {
+    noteAudioError("AudioContext initialization failed", error);
+    console.warn("[CHOMP audio] AudioContext initialization failed.", error);
     return false;
   }
+}
+
+// Browsers, especially iPhone Safari, block audio until a user gesture happens.
+// initAudio() is awaited by Space, click, and tap handlers so resume() runs
+// directly inside the trusted interaction that starts the game.
+async function initAudio() {
+  if (!ensureAudioContext()) {
+    return false;
+  }
+
+  const didResume = await resumeAudioContext();
+
+  if (!didResume) {
+    audioUnlocked = false;
+    return false;
+  }
+
+  audioUnlocked = true;
+  loadAudioBuffers();
+  syncAudioForGameState();
+  return true;
 }
 
 function decodeAudioArrayBuffer(arrayBuffer) {
@@ -2115,10 +2152,13 @@ function loadAudioArrayBuffer(path, onStatus = null) {
       }
 
       if (!ok) {
+        noteAudioError(`${path} returned HTTP ${status}`);
+        console.warn("[CHOMP audio] WAV fetch failure", { path, status });
         reject(new Error(`${path} returned HTTP ${status}`));
         return;
       }
 
+      console.info("[CHOMP audio] WAV fetch success", { path, status, bytes });
       resolve(request.response);
     };
 
@@ -2127,6 +2167,8 @@ function loadAudioArrayBuffer(path, onStatus = null) {
         onStatus({ path, status: request.status, ok: false, error: "network error" });
       }
 
+      noteAudioError(`${path} failed to load`);
+      console.warn("[CHOMP audio] WAV fetch failure", { path, status: request.status });
       reject(new Error(`${path} failed to load with XMLHttpRequest.`));
     };
 
@@ -2135,6 +2177,8 @@ function loadAudioArrayBuffer(path, onStatus = null) {
         onStatus({ path, status: request.status, ok: false, error: "aborted" });
       }
 
+      noteAudioError(`${path} load aborted`);
+      console.warn("[CHOMP audio] WAV fetch failure", { path, status: request.status, aborted: true });
       reject(new Error(`${path} load was aborted.`));
     };
 
@@ -2169,14 +2213,30 @@ function loadAudioBuffers() {
   }
 
   audioLoadPromise = Promise.all(Object.entries(AUDIO_ASSETS).map(([key, asset]) => {
-    return loadAudioArrayBuffer(asset.path, (event) => {
-      if (!event.ok) {
-        console.warn(`[CHOMP audio] ${asset.path} returned HTTP ${event.status}.`, { key, path: asset.path });
-      }
-    })
-      .then((arrayBuffer) => decodeAudioArrayBuffer(arrayBuffer))
+    return loadAudioArrayBuffer(asset.path)
+      .then((arrayBuffer) => decodeAudioArrayBuffer(arrayBuffer)
+        .then((audioBuffer) => {
+          console.info("[CHOMP audio] WAV decode success", {
+            key,
+            path: asset.path,
+            duration: `${audioBuffer.duration.toFixed(2)}s`,
+          });
+          return audioBuffer;
+        })
+        .catch((error) => {
+          noteAudioError(`${asset.path} decode failed`, error);
+          console.warn("[CHOMP audio] WAV decode failure", { key, path: asset.path, error });
+          throw error;
+        }))
       .then((audioBuffer) => {
         loadedAudioBuffers[key] = audioBuffer;
+
+        if ((key === "main" || key === "frenzy") &&
+          audioUnlocked &&
+          audioContext &&
+          audioContext.state === "running") {
+          syncAudioForGameState();
+        }
 
         if (key === "death" && pendingDeathSoundPlayback) {
           playDeathSound();
@@ -2189,14 +2249,16 @@ function loadAudioBuffers() {
         return audioBuffer;
       })
       .catch((error) => {
-        console.warn(
-          `[CHOMP audio] Failed to load or decode ${asset.path}. The game will continue without it.`,
-          error
-        );
         loadedAudioBuffers[key] = null;
         return null;
       });
-  })).then(() => loadedAudioBuffers);
+  })).then(() => {
+    if (audioUnlocked && audioContext && audioContext.state === "running") {
+      syncAudioForGameState();
+    }
+
+    return loadedAudioBuffers;
+  });
 
   return audioLoadPromise;
 }
@@ -2320,9 +2382,18 @@ function playMediaAudioTrack(trackKey, options = {}) {
   const playPromise = track.element.play();
 
   if (playPromise && typeof playPromise.catch === "function") {
-    playPromise.catch((error) => {
-      console.warn(`[CHOMP audio] Media fallback could not play ${AUDIO_ASSETS[trackKey].path}.`, error);
-    });
+    playPromise
+      .then(() => {
+        console.info("[CHOMP audio] Source start success", {
+          key: trackKey,
+          path: AUDIO_ASSETS[trackKey].path,
+          source: "mediaElement",
+        });
+      })
+      .catch((error) => {
+        noteAudioError(`${AUDIO_ASSETS[trackKey].path} media playback failed`, error);
+        console.warn(`[CHOMP audio] Media fallback could not play ${AUDIO_ASSETS[trackKey].path}.`, error);
+      });
   }
 
   return track;
@@ -2421,8 +2492,10 @@ function ensureLoopingSource(trackKey) {
   try {
     stopMediaAudioTrack(trackKey, 0, true);
     source.start();
+    console.info("[CHOMP audio] Source start success", { key: trackKey, path: asset.path });
   } catch (error) {
-    console.warn(`CHOMP audio could not start ${asset.path}.`, error);
+    noteAudioError(`${asset.path} source start failed`, error);
+    console.warn("[CHOMP audio] Source start failure", { key: trackKey, path: asset.path, error });
   }
 
   return source;
@@ -2633,8 +2706,10 @@ function playDeathSound() {
 
   try {
     source.start();
+    console.info("[CHOMP audio] Source start success", { key: "death", path: AUDIO_ASSETS.death.path });
   } catch (error) {
-    console.warn(`CHOMP audio could not start ${AUDIO_ASSETS.death.path}.`, error);
+    noteAudioError(`${AUDIO_ASSETS.death.path} source start failed`, error);
+    console.warn("[CHOMP audio] Source start failure", { key: "death", path: AUDIO_ASSETS.death.path, error });
   }
 }
 
@@ -2720,8 +2795,10 @@ function playVictoryMusic() {
 
   try {
     source.start();
+    console.info("[CHOMP audio] Source start success", { key: "victory", path: AUDIO_ASSETS.victory.path });
   } catch (error) {
-    console.warn(`CHOMP audio could not start ${AUDIO_ASSETS.victory.path}.`, error);
+    noteAudioError(`${AUDIO_ASSETS.victory.path} source start failed`, error);
+    console.warn("[CHOMP audio] Source start failure", { key: "victory", path: AUDIO_ASSETS.victory.path, error });
   }
 }
 
@@ -2800,8 +2877,8 @@ function setMuted(isMuted) {
   syncAudioForGameState();
 }
 
-function toggleMute() {
-  initAudio();
+async function toggleMute() {
+  await initAudio();
   setMuted(!isSoundMuted);
 
   if (!isSoundMuted) {
@@ -2954,8 +3031,8 @@ function updatePauseButton() {
   pauseButtonElement.setAttribute("aria-pressed", String(isPaused));
 }
 
-function togglePause() {
-  initAudio();
+async function togglePause() {
+  await initAudio();
 
   if (gameState !== GAME_STATE.PLAYING) {
     return;
@@ -5247,6 +5324,47 @@ function drawPlayerShark() {
   ctx.restore();
 }
 
+function getAudioStatusLines() {
+  const hasAudioContext = Boolean(audioContext);
+  const masterGainValue = masterGain ? masterGain.gain.value.toFixed(2) : "n/a";
+  const audioState = audioContext ? audioContext.state : "none";
+  const mainBufferLoaded = Boolean(loadedAudioBuffers.main);
+  const deathBufferLoaded = Boolean(loadedAudioBuffers.death);
+  const mainSourceStarted = Boolean(mainMusicSource) ||
+    Boolean(mediaAudioTracks.main && !mediaAudioTracks.main.element.paused);
+  const errorText = lastAudioError || "none";
+
+  return [
+    `AudioContext created: ${hasAudioContext ? "yes" : "no"} | state: ${audioState} | audioUnlocked: ${audioUnlocked ? "yes" : "no"} | muted: ${isSoundMuted ? "yes" : "no"} | masterGain: ${masterGainValue}`,
+    `main buffer loaded: ${mainBufferLoaded ? "yes" : "no"} | death buffer loaded: ${deathBufferLoaded ? "yes" : "no"} | main source started: ${mainSourceStarted ? "yes" : "no"} | last audio error: ${errorText}`,
+  ];
+}
+
+function drawAudioStatusLine() {
+  const lines = getAudioStatusLines();
+  const x = 10;
+  const y = canvas.height - 34;
+  const lineHeight = 15;
+  const panelWidth = canvas.width - 20;
+  const panelHeight = 32;
+
+  ctx.save();
+  ctx.globalAlpha = 0.88;
+  ctx.fillStyle = "rgba(3, 17, 31, 0.78)";
+  ctx.fillRect(x - 4, y - 11, panelWidth, panelHeight);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#d9fbff";
+  ctx.font = AUDIO_STATUS_FONT;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+
+  lines.forEach((line, index) => {
+    ctx.fillText(line.slice(0, 118), x, y + index * lineHeight);
+  });
+
+  ctx.restore();
+}
+
 function drawAnimatedDolphin(enemy) {
   const direction = DIRECTIONS[enemy.direction || enemy.startDirection];
   const isVulnerable = enemy.state === "vulnerable";
@@ -6244,6 +6362,8 @@ function gameLoop() {
     drawParticles();
   }
 
+  drawAudioStatusLine();
+
   requestAnimationFrame(gameLoop);
 }
 
@@ -6291,7 +6411,6 @@ const SWIPE_DISTANCE = 30;
 
 canvas.addEventListener("touchstart", (event) => {
   event.preventDefault();
-  initAudio();
   const touch = event.changedTouches[0];
   touchStartX = touch.clientX;
   touchStartY = touch.clientY;
