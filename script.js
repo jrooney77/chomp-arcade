@@ -2006,86 +2006,66 @@ function getAudioDiagnosticSnapshot() {
 
 // TEMP AUDIO DIAGNOSTIC: direct user-gesture playback path for WAV debugging.
 async function handleTestAudioClick() {
-  audioDiagnosticOutputElement.textContent = "";
-  audioDiagnosticOutputElement.classList.add("has-output");
-  appendAudioDiagnosticLine("Initial audio snapshot", getAudioDiagnosticSnapshot());
+  const diagnostics = document.getElementById("audioDiagnosticOutput");
 
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  diagnostics.textContent = "TEST AUDIO CLICK RECEIVED";
+  diagnostics.classList.add("has-output");
+  console.log("TEST AUDIO CLICK RECEIVED");
 
-  if (!AudioContextClass) {
-    appendAudioDiagnosticLine("ERROR", { message: "Web Audio API is unavailable in this browser." });
-    return;
+  const appendDiagnostic = (message) => {
+    diagnostics.textContent += `\n${message}`;
+    console.log(message);
+  };
+
+  async function runIsolatedAudioTest() {
+    const AudioContextClass =
+      window.AudioContext || window.webkitAudioContext;
+
+    if (!AudioContextClass) {
+      throw new Error("Web Audio API is unavailable.");
+    }
+
+    const testContext = new AudioContextClass();
+
+    diagnostics.textContent +=
+      `\nCreated isolated AudioContext: ${testContext.state}`;
+    console.log(`Created isolated AudioContext: ${testContext.state}`);
+
+    if (testContext.state === "suspended") {
+      await testContext.resume();
+    }
+
+    diagnostics.textContent +=
+      `\nAfter resume: ${testContext.state}`;
+    console.log(`After resume: ${testContext.state}`);
+
+    const oscillator = testContext.createOscillator();
+    const gain = testContext.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.value = 440;
+    gain.gain.value = 0.5;
+
+    oscillator.connect(gain);
+    gain.connect(testContext.destination);
+
+    oscillator.start();
+    oscillator.stop(testContext.currentTime + 1);
+
+    diagnostics.textContent += "\nDirect 440 Hz beep started";
+    console.log("Direct 440 Hz beep started");
+
+    oscillator.onended = async () => {
+      diagnostics.textContent += "\nDirect beep ended";
+      console.log("Direct beep ended");
+      await testContext.close();
+    };
   }
 
   try {
-    audioContext = audioContext || new AudioContextClass();
-    appendAudioDiagnosticLine("AudioContext created", {
-      sampleRate: audioContext.sampleRate,
-      state: audioContext.state,
-    });
-
-    if (!masterGain) {
-      masterGain = audioContext.createGain();
-      masterGain.connect(audioContext.destination);
-    }
-
-    masterGain.gain.cancelScheduledValues(audioContext.currentTime);
-    masterGain.gain.setValueAtTime(0.8, audioContext.currentTime);
-
-    if (audioContext.state === "suspended") {
-      await audioContext.resume();
-    }
-
-    appendAudioDiagnosticLine(`AudioContext state: ${audioContext.state}`);
-
-    const beepOscillator = audioContext.createOscillator();
-    const beepGain = audioContext.createGain();
-    const beepStart = audioContext.currentTime;
-    const beepEnd = beepStart + 0.18;
-
-    beepOscillator.type = "sine";
-    beepOscillator.frequency.setValueAtTime(880, beepStart);
-    beepGain.gain.setValueAtTime(0.0001, beepStart);
-    beepGain.gain.exponentialRampToValueAtTime(0.8, beepStart + 0.02);
-    beepGain.gain.exponentialRampToValueAtTime(0.0001, beepEnd);
-    beepOscillator.connect(beepGain);
-    beepGain.connect(masterGain);
-    beepOscillator.start(beepStart);
-    beepOscillator.stop(beepEnd + 0.02);
-    appendAudioDiagnosticLine("Test beep started");
-
-    const wavPath = AUDIO_ASSETS.death.path;
-    const response = await fetch(wavPath);
-    appendAudioDiagnosticLine("WAV fetch status", {
-      path: wavPath,
-      status: response.status,
-      ok: response.ok,
-    });
-
-    if (!response.ok) {
-      throw new Error(`${wavPath} returned HTTP ${response.status}`);
-    }
-
-    const wavBytes = await response.arrayBuffer();
-    appendAudioDiagnosticLine("WAV bytes received", { bytes: wavBytes.byteLength });
-
-    const decodedBuffer = await decodeAudioArrayBuffer(wavBytes);
-    appendAudioDiagnosticLine("WAV decoded", { duration: `${decodedBuffer.duration.toFixed(2)}s` });
-
-    const wavSource = audioContext.createBufferSource();
-    const wavGain = audioContext.createGain();
-
-    wavSource.buffer = decodedBuffer;
-    wavGain.gain.setValueAtTime(0.8, audioContext.currentTime);
-    wavSource.connect(wavGain);
-    wavGain.connect(masterGain);
-    wavSource.start();
-    appendAudioDiagnosticLine("WAV playback started");
+    await runIsolatedAudioTest();
   } catch (error) {
-    appendAudioDiagnosticLine("ERROR", {
-      name: error.name,
-      message: error.message,
-    });
+    appendDiagnostic(`ERROR: ${error.name}: ${error.message}`);
   }
 }
 
