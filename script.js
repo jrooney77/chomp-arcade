@@ -394,7 +394,7 @@ const LEVELS = [
     id: 8,
     name: "Guarded Depths",
     theme: "guardedDepths",
-    enemySpeedModifier: 1,
+    enemySpeedModifier: 0,
     goldenFish: { ...DEFAULT_GOLDEN_FISH_SETTINGS },
     maze: [
       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -426,7 +426,7 @@ const LEVELS = [
     id: 9,
     name: "Predator Maze",
     theme: "predatorMaze",
-    enemySpeedModifier: 1,
+    enemySpeedModifier: 0,
     goldenFish: { firstChumTrigger: 16, chumInterval: 30, durationMs: 7000 },
     maze: [
       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -458,7 +458,7 @@ const LEVELS = [
     id: 10,
     name: "Apex Chomp Gauntlet",
     theme: "apexGauntlet",
-    enemySpeedModifier: 1,
+    enemySpeedModifier: 0,
     goldenFish: { firstChumTrigger: 18, chumInterval: 32, durationMs: 7000 },
     maze: [
       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
