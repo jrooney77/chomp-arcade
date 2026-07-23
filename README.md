@@ -57,9 +57,9 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 
 ## Levels
 
-- The game currently has 10 configured levels.
+- The game currently has 20 configured levels.
 - The level data is organized so future updates can add more levels without new gameplay functions.
-- The roadmap may eventually grow the game toward 50 levels, but those levels have not been created yet.
+- The roadmap may eventually grow the game toward 50 levels, but Levels 21-50 have not been created yet.
 - Collecting all chum clears the current level. Frenzy Bait is optional for clearing.
 - Score and lives carry forward between levels.
 - The maze, shark position, and enemy positions reset for each new level.
@@ -78,14 +78,24 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - Level 8, Guarded Depths: uses two Puffers in alternate corridors.
 - Level 9, Predator Maze: creates the hardest non-final chase layout in this batch.
 - Level 10, Apex Chomp Gauntlet: milestone challenge with all current enemy types.
+- Level 11, Reef Reentry: moderates the pace with three enemies and multiple looping routes.
+- Level 12, Puffer Circuit: brings back one Puffer Guard in branching circular pathways.
+- Level 13, Drone Grid: emphasizes Diver Drone pressure across long corridors with escape intersections.
+- Level 14, Electric Divide: leans on Electric Eel routing across divided maze sections.
+- Level 15, Midway Frenzy: midpoint challenge using all four enemy types with fair Frenzy Bait access.
+- Level 16, Guarded Current: uses two Puffers in wider spaces with alternate bypass routes.
+- Level 17, Predator Loops: combines Dolphin and Drone pressure across looping escape paths.
+- Level 18, Voltage Chambers: emphasizes Electric Eel pressure in connected chambers with a speed increase.
+- Level 19, Deep Reef Pursuit: hardest non-milestone pursuit layout in the second batch.
+- Level 20, Abyss Gauntlet: milestone challenge with all current enemy types and the final victory screen.
 
 ### Adding Future Levels
 
-Levels live in the `LEVELS` array in `script.js`. To add Level 11 later, copy an existing level object, paste it after Level 10, and update its data:
+Levels live in the `LEVELS` array in `script.js`. To add Level 21 later, copy an existing level object, paste it after Level 20, and update its data:
 
 ```js
 {
-  id: 11,
+  id: 21,
   name: "New Reef",
   theme: "newTheme",
   enemySpeedModifier: 1,
