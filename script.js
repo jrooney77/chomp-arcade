@@ -107,6 +107,30 @@ const MUSIC_FADE_SECONDS = 0.45;
 const QUICK_MUSIC_FADE_SECONDS = 0.18;
 const MUSIC_DUCK_GAIN_RATIO = 0.28;
 const LEVEL_CLEAR_MUSIC_GAIN_RATIO = 0.35;
+const START_SCREEN_MUSIC_GAIN_RATIO = 0.8;
+const START_INTRO_PHASES = [
+  { key: "chomp", label: "CHOMP HUNGRY!", durationMs: 2500 },
+  { key: "dolphin", label: "DOLPHIN PATROL!", durationMs: 2500 },
+  { key: "eel", label: "ELECTRIC EEL ZAPS!", durationMs: 2500 },
+  { key: "drone", label: "DRONE SCANS AHEAD!", durationMs: 2500 },
+  { key: "puffer", label: "PUFFER GUARD DANGER!", durationMs: 2500 },
+  { key: "ready", label: "GET READY TO CHOMP!", durationMs: 2500 },
+];
+const START_INTRO_LOOP_DURATION_MS = START_INTRO_PHASES.reduce((total, phase) => total + phase.durationMs, 0);
+const START_INTRO_SCANLINE_TRANSITION_MS = 220;
+const START_INTRO_SCANLINE_GLOW_HEIGHT = 18;
+const VICTORY_PANEL_FADE_MS = 400;
+const VICTORY_HEADLINE_START_MS = 300;
+const VICTORY_HEADLINE_END_MS = 900;
+const VICTORY_CHOMP_START_MS = 600;
+const VICTORY_CHOMP_END_MS = 1400;
+const VICTORY_EFFECTS_START_MS = 900;
+const VICTORY_EFFECTS_END_MS = 1800;
+const VICTORY_STATS_START_MS = 1200;
+const VICTORY_STATS_END_MS = 2400;
+const VICTORY_MESSAGE_START_MS = 2000;
+const VICTORY_MESSAGE_END_MS = 2800;
+const VICTORY_PROMPT_PULSE_START_MS = 2800;
 const DEATH_ANIMATION_FALLBACK_MS = 7000;
 const MEDIA_FRENZY_MIN_PLAYBACK_RATE = 1;
 const MEDIA_FRENZY_RATE_UPDATE_SECONDS = 0.45;
@@ -1824,6 +1848,7 @@ let particles = [];
 let levelClearMessage = "";
 let lastLevelClearMessage = "";
 let lastSharkBubbleTime = 0;
+let startGameInputPending = false;
 let frenzyMode = {
   active: false,
   endTime: 0,
@@ -1852,6 +1877,32 @@ let goldenFish = {
   spawnedAt: 0,
   expiresAt: 0,
   nextChumTrigger: GOLDEN_FISH_FIRST_CHUM_TRIGGER,
+};
+let runStats = {
+  startedAt: 0,
+  endedAt: 0,
+  chumEaten: 0,
+  frenzyBaitsUsed: 0,
+  highScoreAtStart: 0,
+};
+let startIntroAnimation = {
+  active: true,
+  cycleStartTime: 0,
+  loopDuration: START_INTRO_LOOP_DURATION_MS,
+  currentPhase: START_INTRO_PHASES[0].key,
+};
+let victoryAnimation = {
+  active: false,
+  startTime: 0,
+  elapsedBeforePauseMs: 0,
+  completed: false,
+  isNewHighScore: false,
+  finalScore: 0,
+  highScore: 0,
+  levelsCleared: 0,
+  chumEaten: 0,
+  frenzyBaitsUsed: 0,
+  timePlayedMs: 0,
 };
 
 let playerStart = { ...currentLayout.playerStart };
@@ -1882,26 +1933,47 @@ let enemies = enemyStarts.map((enemyStart) => (
 ));
 
 async function startGame() {
+  if (startGameInputPending) {
+    return;
+  }
+
+  startGameInputPending = true;
+
+  try {
+    await initAudio();
+
+    if (gameState === GAME_STATE.START) {
+      playSound("select");
+      resetRunStats();
+      startIntroAnimation.active = false;
+      gameState = GAME_STATE.PLAYING;
+      updateStatusDisplay();
+      syncAudioForGameState();
+      return;
+    }
+
+    if (gameState === GAME_STATE.LEVEL_CLEAR && levelClearReady) {
+      playSound("select");
+      advanceToNextLevel();
+      return;
+    }
+
+    if (gameState === GAME_STATE.GAME_OVER || gameState === GAME_STATE.WIN) {
+      playSound("select");
+      resetVictoryAnimation();
+      resetGame();
+    }
+  } finally {
+    startGameInputPending = false;
+  }
+}
+
+async function unlockStartScreenAudio() {
+  if (gameState !== GAME_STATE.START || audioUnlocked) {
+    return;
+  }
+
   await initAudio();
-
-  if (gameState === GAME_STATE.START) {
-    playSound("select");
-    gameState = GAME_STATE.PLAYING;
-    updateStatusDisplay();
-    syncAudioForGameState();
-    return;
-  }
-
-  if (gameState === GAME_STATE.LEVEL_CLEAR && levelClearReady) {
-    playSound("select");
-    advanceToNextLevel();
-    return;
-  }
-
-  if (gameState === GAME_STATE.GAME_OVER || gameState === GAME_STATE.WIN) {
-    playSound("select");
-    resetGame();
-  }
 }
 
 function loadHighScore() {
@@ -2788,9 +2860,9 @@ function syncAudioForGameState() {
   }
 
   if (gameState === GAME_STATE.START) {
-    stopLoopingSource("main", QUICK_MUSIC_FADE_SECONDS);
     stopFrenzyMusic(QUICK_MUSIC_FADE_SECONDS);
     stopVictoryMusic(QUICK_MUSIC_FADE_SECONDS);
+    startMainMusic(START_SCREEN_MUSIC_GAIN_RATIO, MUSIC_FADE_SECONDS);
     return;
   }
 
@@ -3083,6 +3155,67 @@ function updateStatusDisplay() {
   updatePauseButton();
 }
 
+function resetRunStats() {
+  runStats = {
+    startedAt: getGameTime(),
+    endedAt: 0,
+    chumEaten: 0,
+    frenzyBaitsUsed: 0,
+    highScoreAtStart: highScore,
+  };
+}
+
+function getRunElapsedMs() {
+  const endTime = runStats.endedAt || getGameTime();
+
+  return Math.max(0, endTime - runStats.startedAt);
+}
+
+function formatElapsedTime(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function resetVictoryAnimation() {
+  victoryAnimation.active = false;
+  victoryAnimation.startTime = 0;
+  victoryAnimation.elapsedBeforePauseMs = 0;
+  victoryAnimation.completed = false;
+}
+
+function startVictoryAnimation() {
+  victoryAnimation = {
+    active: true,
+    startTime: getGameTime(),
+    elapsedBeforePauseMs: 0,
+    completed: false,
+    isNewHighScore: score >= runStats.highScoreAtStart && score > 0,
+    finalScore: score,
+    highScore,
+    levelsCleared: getLevelCount(),
+    chumEaten: runStats.chumEaten,
+    frenzyBaitsUsed: runStats.frenzyBaitsUsed,
+    timePlayedMs: getRunElapsedMs(),
+  };
+}
+
+function getVictoryAnimationElapsedMs() {
+  if (!victoryAnimation.active) {
+    return VICTORY_PROMPT_PULSE_START_MS;
+  }
+
+  return Math.max(0, getGameTime() - victoryAnimation.startTime);
+}
+
+function getVictoryProgress(startMs, endMs) {
+  const elapsed = getVictoryAnimationElapsedMs();
+
+  return Math.max(0, Math.min(1, (elapsed - startMs) / (endMs - startMs)));
+}
+
 // Debug mode is intentionally simple and local-test friendly. It hides enemies,
 // stops enemy movement, and skips enemy collision without changing collectibles
 // or level progression.
@@ -3370,8 +3503,10 @@ function loadLevel(levelNumber) {
 
 function resetGame() {
   resetDeathAnimation();
+  resetVictoryAnimation();
   stopVictoryMusic(0);
   stopDeathSound(true);
+  resetRunStats();
   currentLevel = 1;
   score = 0;
   lives = STARTING_LIVES;
@@ -3701,6 +3836,7 @@ function collectTile() {
   if (tile === TILE.CHUM) {
     maze[player.row][player.col] = TILE.EMPTY;
     remainingChum -= 1;
+    runStats.chumEaten += 1;
     triggerSharkChomp();
     playSound("chum");
     spawnChumParticles(player.x, player.y);
@@ -3712,6 +3848,7 @@ function collectTile() {
 
   if (tile === TILE.FRENZY_BAIT) {
     maze[player.row][player.col] = TILE.EMPTY;
+    runStats.frenzyBaitsUsed += 1;
     triggerSharkChomp();
     playSound("frenzyBait");
     spawnFrenzyParticles(player.x, player.y);
@@ -3768,8 +3905,11 @@ function advanceToNextLevel() {
 }
 
 function startWin() {
+  updateHighScore();
   gameState = GAME_STATE.WIN;
   levelClearReady = false;
+  runStats.endedAt = getGameTime();
+  startVictoryAnimation();
   resetGoldenFish();
   endFrenzyMode();
   resetPlayerPosition();
@@ -6109,34 +6249,864 @@ function drawScreenOverlay(options) {
   ctx.restore();
 }
 
-function drawStartScreen() {
-  drawScreenOverlay({
-    title: "CHOMP",
-    subtitle: "A Shark Maze Arcade Game",
-    themeLines: [
-      "Gobble the chum.",
-      "Avoid the reef defenders.",
-      "Grab Frenzy Bait to turn the tide.",
-    ],
-    statLines: [
-      highScore > 0 ? `High Score: ${highScore}` : "High Score: 0",
-    ],
-    controlLines: [
-      "Desktop: Arrow Keys / WASD to move, Space to start",
-      "Mobile: Tap to start, swipe to move",
-    ],
-    action: "Press Space or Tap to Start",
-    titleColor: "#4fe3ff",
-    glowColor: "rgba(79, 227, 255, 0.9)",
-    accentColor: "rgba(79, 227, 255, 0.9)",
-    panelWidth: 548,
-    panelHeight: 408,
-    titleFont: "bold 64px Trebuchet MS, Lucida Console, monospace",
-    themeStart: 150,
-    statsStart: 246,
-    controlsStart: 288,
-    controlsFont: "bold 14px Trebuchet MS, Lucida Console, monospace",
+function drawNeonDivider(x, y, width, color = "rgba(79, 227, 255, 0.65)") {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + width, y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPresentationShark(x, y, scale = 1, angle = 0, options = {}) {
+  const isFrenzy = Boolean(options.isFrenzy);
+  const mouthOpen = options.mouthOpen ?? 0.32;
+  const bodyGradient = ctx.createLinearGradient(-38, -19, 40, 18);
+
+  bodyGradient.addColorStop(0, isFrenzy ? "#ffbd73" : "#b9d9e5");
+  bodyGradient.addColorStop(0.48, isFrenzy ? "#ff793c" : "#6f9fb7");
+  bodyGradient.addColorStop(1, isFrenzy ? "#c93c34" : "#355a70");
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.scale(scale, scale);
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.shadowColor = isFrenzy ? "rgba(255, 111, 64, 0.92)" : "rgba(79, 227, 255, 0.48)";
+  ctx.shadowBlur = 11;
+
+  if (isFrenzy) {
+    ctx.save();
+    ctx.globalAlpha = 0.34;
+    ctx.fillStyle = "rgba(255, 111, 64, 0.26)";
+    ctx.beginPath();
+    ctx.ellipse(1, 1, 48, 30, -0.05, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Screen-only CHOMP art: broader and cleaner than the gameplay sprite, while
+  // preserving the compact shark identity.
+  ctx.fillStyle = bodyGradient;
+  ctx.strokeStyle = "#d9fbff";
+  ctx.lineWidth = 2.1;
+  ctx.beginPath();
+  ctx.moveTo(-30, -7);
+  ctx.lineTo(-44, -17);
+  ctx.lineTo(-40, -3);
+  ctx.lineTo(-49, 11);
+  ctx.lineTo(-29, 6);
+  ctx.quadraticCurveTo(-18, 20, 8, 19);
+  ctx.quadraticCurveTo(27, 18, 40, 7 + mouthOpen * 3);
+  ctx.lineTo(29, 3);
+  ctx.lineTo(43, -6 - mouthOpen * 4);
+  ctx.quadraticCurveTo(26, -20, 0, -21);
+  ctx.quadraticCurveTo(-18, -21, -30, -7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = isFrenzy ? "#ffcf5c" : "#b7d9e6";
+  ctx.beginPath();
+  ctx.moveTo(-8, -18);
+  ctx.lineTo(6, -34);
+  ctx.lineTo(15, -16);
+  ctx.lineTo(3, -18);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(-4, 16);
+  ctx.lineTo(-14, 29);
+  ctx.lineTo(7, 17);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "rgba(243, 251, 255, 0.92)";
+  ctx.beginPath();
+  ctx.moveTo(-11, 9);
+  ctx.quadraticCurveTo(4, 17, 24, 10);
+  ctx.quadraticCurveTo(11, 22, -14, 14);
+  ctx.quadraticCurveTo(-20, 11, -11, 9);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#07131f";
+  ctx.beginPath();
+  ctx.moveTo(29, -1 - mouthOpen * 1.8);
+  ctx.lineTo(44, -6 - mouthOpen * 4);
+  ctx.lineTo(38, 5 + mouthOpen * 3);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#f8fdff";
+  [[33, -5, 37, -3, 35, -0.2], [37, 3, 40, 5, 35, 6.4]].forEach((tooth) => {
+    ctx.beginPath();
+    ctx.moveTo(tooth[0], tooth[1]);
+    ctx.lineTo(tooth[2], tooth[3]);
+    ctx.lineTo(tooth[4], tooth[5]);
+    ctx.closePath();
+    ctx.fill();
   });
+
+  ctx.fillStyle = "#f8fdff";
+  ctx.beginPath();
+  ctx.arc(14, -10, 4.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#07131f";
+  ctx.beginPath();
+  ctx.arc(15.5, -9.8, 2.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#d9fbff";
+  ctx.beginPath();
+  ctx.arc(13.7, -11.3, 0.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#07131f";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(7, -17);
+  ctx.lineTo(18, -13.5);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function createPresentationEnemy(type, direction = "right", pufferState = "normal") {
+  return {
+    x: 0,
+    y: 0,
+    row: 0,
+    col: 0,
+    direction,
+    speed: ENEMY_SPEEDS[type] || 1,
+    type,
+    state: "normal",
+    isVulnerable: false,
+    returnUntil: 0,
+    startRow: 0,
+    startCol: 0,
+    startDirection: direction,
+    pufferState,
+    pufferStateUntil: getGameTime() + PUFFER_INFLATED_MS,
+    pufferNextInflateAt: getGameTime() + PUFFER_INFLATE_INTERVAL_MS,
+  };
+}
+
+function drawPresentationEnemy(type, x, y, scale = 1, direction = "right", pufferState = "normal") {
+  const enemy = createPresentationEnemy(type, direction, pufferState);
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  if (type === "dolphinPatrol") {
+    drawDolphinPatrol(enemy);
+  } else if (type === "electricEel") {
+    drawElectricEel(enemy);
+  } else if (type === "diverDrone") {
+    drawDiverDrone(enemy);
+  } else if (type === "puffer") {
+    drawPufferGuard(enemy);
+  }
+
+  ctx.restore();
+}
+
+function easeIntroProgress(progress) {
+  return progress * progress * (3 - progress * 2);
+}
+
+function easeIntroOutCubic(progress) {
+  return 1 - Math.pow(1 - progress, 3);
+}
+
+function easeIntroInOutSine(progress) {
+  return -(Math.cos(Math.PI * progress) - 1) / 2;
+}
+
+function easeIntroOutBack(progress) {
+  const overshoot = 1.7;
+
+  return 1 + (overshoot + 1) * Math.pow(progress - 1, 3) + overshoot * Math.pow(progress - 1, 2);
+}
+
+function getIntroPhaseAlpha(progress) {
+  const fadeIn = Math.min(1, progress / 0.12);
+  const fadeOut = Math.min(1, (1 - progress) / 0.12);
+
+  return Math.max(0, Math.min(1, fadeIn, fadeOut));
+}
+
+function getStartIntroPhaseInfo() {
+  if (!startIntroAnimation.cycleStartTime) {
+    startIntroAnimation.cycleStartTime = getGameTime();
+  }
+
+  const elapsed = (getGameTime() - startIntroAnimation.cycleStartTime) % startIntroAnimation.loopDuration;
+  let phaseStart = 0;
+
+  for (let index = 0; index < START_INTRO_PHASES.length; index += 1) {
+    const phase = START_INTRO_PHASES[index];
+    const phaseEnd = phaseStart + phase.durationMs;
+
+    if (elapsed < phaseEnd) {
+      const progress = (elapsed - phaseStart) / phase.durationMs;
+      const transitionElapsed = Math.max(0, elapsed - (phaseEnd - START_INTRO_SCANLINE_TRANSITION_MS));
+      const isTransitioning = transitionElapsed > 0;
+      const transitionProgress = isTransitioning
+        ? Math.min(1, transitionElapsed / START_INTRO_SCANLINE_TRANSITION_MS)
+        : 0;
+      const nextPhaseIndex = (index + 1) % START_INTRO_PHASES.length;
+
+      startIntroAnimation.currentPhase = phase.key;
+      return {
+        phase,
+        incomingPhase: START_INTRO_PHASES[nextPhaseIndex],
+        progress,
+        easedProgress: easeIntroProgress(progress),
+        phaseIndex: index,
+        incomingPhaseIndex: nextPhaseIndex,
+        isTransitioning,
+        transitionProgress,
+        outgoingAlpha: isTransitioning ? 1 - transitionProgress * 0.52 : getIntroPhaseAlpha(progress),
+        incomingAlpha: isTransitioning ? 0.78 + transitionProgress * 0.22 : 0,
+      };
+    }
+
+    phaseStart = phaseEnd;
+  }
+
+  startIntroAnimation.currentPhase = START_INTRO_PHASES[0].key;
+  return {
+    phase: START_INTRO_PHASES[0],
+    incomingPhase: START_INTRO_PHASES[1],
+    progress: 0,
+    easedProgress: 0,
+    phaseIndex: 0,
+    incomingPhaseIndex: 1,
+    isTransitioning: false,
+    transitionProgress: 0,
+    outgoingAlpha: 1,
+    incomingAlpha: 0,
+  };
+}
+
+function drawIntroStageBackground(stage, phaseIndex) {
+  const offset = (getGameTime() / 36 + phaseIndex * 17) % 36;
+
+  ctx.save();
+  const gradient = ctx.createLinearGradient(stage.x, stage.y, stage.x, stage.y + stage.height);
+  gradient.addColorStop(0, "rgba(6, 48, 72, 0.8)");
+  gradient.addColorStop(0.55, "rgba(3, 24, 41, 0.86)");
+  gradient.addColorStop(1, "rgba(2, 10, 21, 0.9)");
+  ctx.fillStyle = gradient;
+  drawRoundedRect(stage.x, stage.y, stage.width, stage.height, 8);
+  ctx.fill();
+
+  ctx.globalAlpha = 0.18;
+  ctx.strokeStyle = "#4fe3ff";
+  ctx.lineWidth = 1;
+  for (let lineY = stage.y + 12; lineY < stage.y + stage.height; lineY += 18) {
+    ctx.beginPath();
+    ctx.moveTo(stage.x + 8, lineY);
+    ctx.lineTo(stage.x + stage.width - 8, lineY);
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 0.26;
+  ctx.strokeStyle = "#ffcf5c";
+  for (let lineX = stage.x - offset; lineX < stage.x + stage.width; lineX += 36) {
+    ctx.beginPath();
+    ctx.moveTo(lineX, stage.y + 24);
+    ctx.lineTo(lineX + 18, stage.y + 24);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawIntroBubbles(stage, progress) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(217, 251, 255, 0.45)";
+  ctx.lineWidth = 1.2;
+  for (let index = 0; index < 8; index += 1) {
+    const x = stage.x + 18 + ((index * 27) % Math.max(1, stage.width - 36));
+    const y = stage.y + stage.height - ((progress * 72 + index * 31) % stage.height);
+    const radius = 2 + (index % 3);
+
+    ctx.globalAlpha = 0.2 + (index % 4) * 0.06;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawIntroDolphin(x, y, scale = 1, angle = 0) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.scale(scale, scale);
+  ctx.lineJoin = "round";
+  ctx.shadowColor = "rgba(79, 227, 255, 0.56)";
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = "#7fd8ff";
+  ctx.strokeStyle = "#d9fbff";
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.moveTo(-17, -2);
+  ctx.lineTo(-32, -12);
+  ctx.lineTo(-26, 0);
+  ctx.lineTo(-32, 12);
+  ctx.lineTo(-16, 4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 23, 11, -0.05, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(14, -3);
+  ctx.quadraticCurveTo(30, -5, 36, 0);
+  ctx.quadraticCurveTo(28, 5, 13, 3);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(-2, -9);
+  ctx.lineTo(8, -24);
+  ctx.lineTo(16, -8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#f8fdff";
+  ctx.beginPath();
+  ctx.arc(18, -5, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#07131f";
+  ctx.beginPath();
+  ctx.arc(19.2, -5, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawIntroEel(x, y, scale = 1, progress = 0) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.shadowColor = "rgba(247, 255, 106, 0.8)";
+  ctx.shadowBlur = 12;
+  ctx.strokeStyle = "#b9f15a";
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+
+  for (let point = 0; point <= 9; point += 1) {
+    const px = -40 + point * 9;
+    const py = Math.sin(progress * Math.PI * 2 + point * 0.9) * 7;
+
+    if (point === 0) {
+      ctx.moveTo(px, py);
+    } else {
+      ctx.lineTo(px, py);
+    }
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = "#f7ff6a";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-22, 6);
+  ctx.lineTo(-15, -1);
+  ctx.moveTo(-5, 5);
+  ctx.lineTo(3, -2);
+  ctx.moveTo(13, 5);
+  ctx.lineTo(21, -2);
+  ctx.stroke();
+
+  ctx.strokeStyle = "#ffcf5c";
+  ctx.lineWidth = 2;
+  for (let spark = 0; spark < 3; spark += 1) {
+    const sx = -28 + spark * 27 + Math.sin(progress * Math.PI * 2 + spark) * 3;
+    const sy = -20 + spark * 10;
+
+    ctx.beginPath();
+    ctx.moveTo(sx - 5, sy);
+    ctx.lineTo(sx, sy + 5);
+    ctx.lineTo(sx + 5, sy - 1);
+    ctx.stroke();
+  }
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#f7ff6a";
+  ctx.beginPath();
+  ctx.arc(37, Math.sin(progress * Math.PI * 2 + 9) * 7 - 4, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#07131f";
+  ctx.beginPath();
+  ctx.arc(38, Math.sin(progress * Math.PI * 2 + 9) * 7 - 4, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawIntroDrone(x, y, scale = 1, progress = 0) {
+  const beamPulse = 0.18 + Math.sin(progress * Math.PI * 2) * 0.08;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.shadowColor = "rgba(255, 177, 59, 0.75)";
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = "#ff9d33";
+  ctx.strokeStyle = "#fff0bd";
+  ctx.lineWidth = 2;
+  drawRoundedRect(-24, -15, 48, 30, 8);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#08283d";
+  ctx.beginPath();
+  ctx.arc(18, 0, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#4fe3ff";
+  ctx.beginPath();
+  ctx.arc(20, -1, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = beamPulse;
+  ctx.fillStyle = "#4fe3ff";
+  ctx.beginPath();
+  ctx.moveTo(24, -5);
+  ctx.lineTo(56, -21);
+  ctx.lineTo(56, 21);
+  ctx.lineTo(24, 5);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#ffdf75";
+  ctx.lineWidth = 2;
+  [-20, 20].forEach((podX) => {
+    ctx.beginPath();
+    ctx.arc(podX, -21, 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(podX - 8, -21);
+    ctx.lineTo(podX + 8, -21);
+    ctx.moveTo(podX, -29);
+    ctx.lineTo(podX, -13);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function drawIntroPuffer(x, y, scale = 1, progress = 0) {
+  const pulseCycle = (progress * 2) % 1;
+  const inflate = 0.5 + easeIntroInOutSine(pulseCycle) * 0.22;
+  const radius = 23 + inflate * 8;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.lineJoin = "round";
+  ctx.shadowColor = "rgba(255, 207, 92, 0.72)";
+  ctx.shadowBlur = 11;
+  ctx.fillStyle = "#fff4bd";
+  ctx.strokeStyle = "#946122";
+  ctx.lineWidth = 1.4;
+
+  for (let spike = 0; spike < 12; spike += 1) {
+    const angle = (Math.PI * 2 * spike) / 12;
+
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(angle - 0.12) * radius, Math.sin(angle - 0.12) * radius);
+    ctx.lineTo(Math.cos(angle) * (radius + 8), Math.sin(angle) * (radius + 8));
+    ctx.lineTo(Math.cos(angle + 0.12) * radius, Math.sin(angle + 0.12) * radius);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  const bodyGradient = ctx.createRadialGradient(-7, -8, 4, 0, 0, radius + 8);
+  bodyGradient.addColorStop(0, "#fff1a6");
+  bodyGradient.addColorStop(0.5, "#ffd65c");
+  bodyGradient.addColorStop(1, "#c7782b");
+  ctx.fillStyle = bodyGradient;
+  ctx.strokeStyle = "#fff4bd";
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#f8fdff";
+  ctx.beginPath();
+  ctx.arc(10, -9, 4.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#08283d";
+  ctx.beginPath();
+  ctx.arc(11.4, -9, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#7a4b1b";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(9, 9);
+  ctx.quadraticCurveTo(17, 14, 23, 7);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawStartIntroSegment(stage, phaseInfo, phase = phaseInfo.phase, alpha = 1) {
+  const { progress } = phaseInfo;
+  const centerX = stage.x + stage.width / 2;
+  const centerY = stage.y + stage.height / 2;
+
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  if (phase.key === "chomp") {
+    const entrance = easeIntroOutCubic(Math.min(1, progress / 0.72));
+    const swimX = stage.x - 34 + entrance * (stage.width + 22);
+    const bob = Math.sin(progress * Math.PI * 2) * 5;
+
+    drawPresentationShark(swimX, centerY - 12 + bob, 0.75, 0, {
+      mouthOpen: 0.22 + Math.sin(progress * Math.PI * 8) * 0.08,
+    });
+    drawNeonDivider(stage.x + 24, centerY + 40, stage.width - 48, "rgba(255, 207, 92, 0.48)");
+    ctx.restore();
+    return;
+  }
+
+  if (phase.key === "dolphin") {
+    const chaseEase = easeIntroInOutSine(progress);
+    const chaseX = stage.x + stage.width + 34 - chaseEase * (stage.width + 58);
+    const bob = Math.sin(progress * Math.PI * 2) * 4;
+
+    drawIntroDolphin(chaseX, centerY - 24 + bob, 0.72, 0);
+    drawIntroDolphin(chaseX + 30 + progress * 8, centerY + 14 - bob, 0.58, 0);
+    drawIntroDolphin(chaseX + 58 + progress * 16, centerY - 4 + bob * 0.6, 0.5, 0);
+    ctx.restore();
+    return;
+  }
+
+  if (phase.key === "eel") {
+    const eelX = centerX + Math.sin(progress * Math.PI * 2) * 8;
+
+    drawIntroEel(eelX, centerY - 8, 0.92, progress);
+    ctx.restore();
+    return;
+  }
+
+  if (phase.key === "drone") {
+    const hoverEase = easeIntroInOutSine((progress * 2) % 1);
+    const hoverY = centerY - 13 + hoverEase * 14;
+    const hoverX = centerX - 16 + Math.cos(progress * Math.PI * 2) * 10;
+
+    drawIntroDrone(hoverX, hoverY, 0.82, progress);
+    ctx.restore();
+    return;
+  }
+
+  if (phase.key === "puffer") {
+    const pulseProgress = easeIntroInOutSine((progress * 2.2) % 1);
+
+    drawIntroPuffer(centerX, centerY - 6, 0.76 + pulseProgress * 0.08, progress);
+    ctx.restore();
+    return;
+  }
+
+  const readyScale = 0.92 + Math.min(1, easeIntroOutBack(Math.min(1, progress / 0.42))) * 0.08;
+
+  ctx.save();
+  ctx.translate(centerX - 16, centerY - 20);
+  ctx.scale(readyScale, readyScale);
+  drawPresentationShark(0, 0, 0.68, 0, { mouthOpen: 0.32 });
+  ctx.restore();
+  drawIntroDolphin(centerX - 38, centerY + 42, 0.34, 0);
+  drawIntroEel(centerX + 38, centerY + 36, 0.42, progress);
+  drawIntroDrone(centerX - 34, centerY + 84, 0.36, progress);
+  drawIntroPuffer(centerX + 42, centerY + 82, 0.32, progress);
+  ctx.save();
+  ctx.globalAlpha = 0.18 + Math.sin(progress * Math.PI * 2) * 0.08;
+  ctx.strokeStyle = "#ffcf5c";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(centerX - 16, centerY - 20, 48, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawIntroScanlineTransition(stage, transitionProgress) {
+  const scanY = stage.y + transitionProgress * stage.height;
+  const trailHeight = START_INTRO_SCANLINE_GLOW_HEIGHT * 2.8;
+
+  ctx.save();
+  const trailGradient = ctx.createLinearGradient(stage.x, scanY - trailHeight, stage.x, scanY + 3);
+  trailGradient.addColorStop(0, "rgba(79, 227, 255, 0)");
+  trailGradient.addColorStop(0.65, "rgba(79, 227, 255, 0.12)");
+  trailGradient.addColorStop(1, "rgba(79, 227, 255, 0.28)");
+  ctx.fillStyle = trailGradient;
+  ctx.fillRect(stage.x, scanY - trailHeight, stage.width, trailHeight + 4);
+
+  ctx.shadowColor = "rgba(79, 227, 255, 0.9)";
+  ctx.shadowBlur = 14;
+  ctx.strokeStyle = "rgba(79, 227, 255, 0.92)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(stage.x + 8, scanY);
+  ctx.lineTo(stage.x + stage.width - 8, scanY);
+  ctx.stroke();
+
+  ctx.shadowBlur = 7;
+  ctx.globalAlpha = 0.48;
+  ctx.strokeStyle = "rgba(217, 251, 255, 0.72)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(stage.x + 18, scanY - 4);
+  ctx.lineTo(stage.x + stage.width - 18, scanY - 4);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawStartIntroPhaseDots(x, y, width, activeIndex) {
+  const dotGap = 13;
+  const totalWidth = (START_INTRO_PHASES.length - 1) * dotGap;
+  const startX = x + width / 2 - totalWidth / 2;
+
+  ctx.save();
+  START_INTRO_PHASES.forEach((phase, index) => {
+    ctx.fillStyle = index === activeIndex ? "#ffcf5c" : "rgba(79, 227, 255, 0.36)";
+    ctx.shadowColor = index === activeIndex ? "rgba(255, 207, 92, 0.72)" : "transparent";
+    ctx.shadowBlur = index === activeIndex ? 7 : 0;
+    ctx.beginPath();
+    ctx.arc(startX + index * dotGap, y, index === activeIndex ? 3 : 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawStartIntroPanel(x, y, width, height) {
+  const phaseInfo = getStartIntroPhaseInfo();
+  const stage = {
+    x: x + 13,
+    y: y + 58,
+    width: width - 26,
+    height: height - 126,
+  };
+
+  startIntroAnimation.active = gameState === GAME_STATE.START;
+
+  drawArcadePanel(x, y, width, height, "rgba(79, 227, 255, 0.9)");
+  drawCenteredText("ARCADE CHASE", x + width / 2, y + 25, {
+    color: "#4fe3ff",
+    font: "bold 15px Trebuchet MS, Lucida Console, monospace",
+    glowColor: "rgba(79, 227, 255, 0.7)",
+    glowBlur: 9,
+  });
+  drawCenteredText("ATTRACT LOOP", x + width / 2, y + 42, {
+    color: "#ffd4c7",
+    font: "bold 10px Trebuchet MS, Lucida Console, monospace",
+  });
+
+  ctx.save();
+  drawRoundedRect(stage.x, stage.y, stage.width, stage.height, 8);
+  ctx.clip();
+  drawIntroStageBackground(stage, phaseInfo.phaseIndex);
+  drawIntroBubbles(stage, phaseInfo.progress);
+
+  if (phaseInfo.isTransitioning) {
+    const incomingInfo = {
+      ...phaseInfo,
+      phase: phaseInfo.incomingPhase,
+      progress: Math.min(1, phaseInfo.transitionProgress * 0.22),
+    };
+    const revealHeight = Math.max(0, stage.height * phaseInfo.transitionProgress);
+
+    drawStartIntroSegment(stage, phaseInfo, phaseInfo.phase, phaseInfo.outgoingAlpha);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(stage.x, stage.y, stage.width, revealHeight);
+    ctx.clip();
+    drawIntroStageBackground(stage, phaseInfo.incomingPhaseIndex);
+    drawIntroBubbles(stage, incomingInfo.progress);
+    drawStartIntroSegment(stage, incomingInfo, phaseInfo.incomingPhase, phaseInfo.incomingAlpha);
+    ctx.restore();
+
+    drawIntroScanlineTransition(stage, phaseInfo.transitionProgress);
+  } else {
+    drawStartIntroSegment(stage, phaseInfo, phaseInfo.phase, phaseInfo.outgoingAlpha);
+  }
+
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(79, 227, 255, 0.72)";
+  ctx.lineWidth = 1.5;
+  drawRoundedRect(stage.x, stage.y, stage.width, stage.height, 8);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.fillStyle = "rgba(3, 17, 31, 0.72)";
+  drawRoundedRect(x + 12, y + height - 57, width - 24, 34, 8);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255, 207, 92, 0.42)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  const labelPhase = phaseInfo.isTransitioning && phaseInfo.transitionProgress > 0.55
+    ? phaseInfo.incomingPhase
+    : phaseInfo.phase;
+  const activeDotIndex = phaseInfo.isTransitioning && phaseInfo.transitionProgress > 0.55
+    ? phaseInfo.incomingPhaseIndex
+    : phaseInfo.phaseIndex;
+
+  drawCenteredText(labelPhase.label, x + width / 2, y + height - 41, {
+    color: labelPhase.key === "ready" ? "#ffcf5c" : "#4fe3ff",
+    font: "bold 11px Trebuchet MS, Lucida Console, monospace",
+    glowColor: labelPhase.key === "ready" ? "rgba(255, 207, 92, 0.65)" : "rgba(79, 227, 255, 0.5)",
+    glowBlur: 7,
+  });
+  drawStartIntroPhaseDots(x, y + height - 14, width, activeDotIndex);
+}
+
+function drawInstructionCard(x, y, width, height) {
+  const instructionLines = [
+    ["o", "Gobble the chum."],
+    ["!", "Avoid the reef defenders."],
+    ["@", "Grab Frenzy Bait to turn the tide."],
+  ];
+
+  ctx.save();
+  ctx.fillStyle = "rgba(3, 17, 31, 0.82)";
+  ctx.shadowColor = "rgba(79, 227, 255, 0.52)";
+  ctx.shadowBlur = 12;
+  drawRoundedRect(x, y, width, height, 10);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "rgba(79, 227, 255, 0.7)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  instructionLines.forEach(([icon, text], index) => {
+    const lineY = y + 17 + index * 18;
+
+    drawCenteredText(icon, x + 20, lineY, {
+      color: index === 1 ? "#ffcf5c" : "#4fe3ff",
+      font: "bold 14px Trebuchet MS, Lucida Console, monospace",
+    });
+    ctx.fillStyle = "#d9fbff";
+    ctx.font = "bold 12px Trebuchet MS, Lucida Console, monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, x + 38, lineY);
+  });
+
+  drawNeonDivider(x + 18, y + 60, width - 36, "rgba(255, 212, 199, 0.45)");
+  drawCenteredText("Desktop: Arrow Keys / WASD to move, Space to start", x + width / 2, y + 76, {
+    color: "#ffd4c7",
+    font: "bold 9px Trebuchet MS, Lucida Console, monospace",
+  });
+  drawCenteredText("Mobile: Tap to start, swipe to move", x + width / 2, y + 90, {
+    color: "#ffd4c7",
+    font: "bold 9px Trebuchet MS, Lucida Console, monospace",
+  });
+
+  ctx.restore();
+}
+
+function drawStartHeroPanel(x, y, width, height) {
+  drawArcadePanel(x, y, width, height, "rgba(79, 227, 255, 0.9)");
+
+  const seaGradient = ctx.createRadialGradient(x + width * 0.5, y + 182, 28, x + width * 0.5, y + 188, width * 0.68);
+  seaGradient.addColorStop(0, "rgba(79, 227, 255, 0.24)");
+  seaGradient.addColorStop(0.55, "rgba(8, 64, 86, 0.08)");
+  seaGradient.addColorStop(1, "rgba(3, 17, 31, 0)");
+  ctx.fillStyle = seaGradient;
+  ctx.fillRect(x + 10, y + 10, width - 20, height - 20);
+
+  drawCenteredText("CHOMP", x + width / 2, y + 48, {
+    color: "#4fe3ff",
+    font: "bold 52px Trebuchet MS, Lucida Console, monospace",
+    glowColor: "rgba(79, 227, 255, 0.95)",
+    glowBlur: 18,
+  });
+  drawCenteredText("A Shark Maze Arcade Game", x + width / 2, y + 78, {
+    color: "#ffd4c7",
+    font: "bold 16px Trebuchet MS, Lucida Console, monospace",
+    glowColor: "rgba(255, 155, 135, 0.45)",
+    glowBlur: 6,
+  });
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(79, 227, 255, 0.24)";
+  ctx.lineWidth = 1;
+  drawRoundedRect(x + 28, y + 102, width - 56, 176, 10);
+  ctx.stroke();
+  ctx.restore();
+
+  drawPresentationEnemy("dolphinPatrol", x + 76, y + 148, 0.76, "right");
+  drawPresentationEnemy("dolphinPatrol", x + 108, y + 176, 0.62, "right");
+  drawPresentationEnemy("electricEel", x + width - 74, y + 148, 0.76, "left");
+  drawPresentationEnemy("diverDrone", x + 84, y + 204, 0.62, "right");
+  drawPresentationEnemy("puffer", x + width - 74, y + 204, 0.6, "left", "inflated");
+  drawPresentationShark(x + width / 2 + 4, y + 170, 1.55, -0.04, { mouthOpen: 0.34 });
+
+  drawInstructionCard(x + 58, y + 232, width - 116, 94);
+
+  ctx.save();
+  ctx.fillStyle = "rgba(4, 31, 49, 0.9)";
+  ctx.shadowColor = "rgba(255, 207, 92, 0.65)";
+  ctx.shadowBlur = 12;
+  drawRoundedRect(x + 24, y + height - 44, width - 48, 34, 8);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "rgba(79, 227, 255, 0.82)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  drawCenteredText(">>  PRESS SPACE OR TAP TO START  <<", x + width / 2, y + height - 27, {
+    color: "#ffcf5c",
+    font: "bold 18px Trebuchet MS, Lucida Console, monospace",
+    glowColor: "rgba(255, 207, 92, 0.8)",
+    glowBlur: 9,
+  });
+  ctx.restore();
+}
+
+function drawStartScreen() {
+  drawOverlayBackdrop("rgba(79, 227, 255, 0.9)");
+  drawCenteredText("CHOMP", canvas.width / 2, 29, {
+    color: "#4fe3ff",
+    font: "bold 50px Trebuchet MS, Lucida Console, monospace",
+    glowColor: "rgba(79, 227, 255, 0.95)",
+    glowBlur: 18,
+  });
+  drawCenteredText("A Shark Maze Arcade Game", canvas.width / 2, 58, {
+    color: "#ffd4c7",
+    font: "bold 15px Trebuchet MS, Lucida Console, monospace",
+  });
+  drawStartIntroPanel(14, 78, 176, 386);
+  drawStartHeroPanel(204, 78, 390, 386);
 }
 
 function drawGameOverScreen() {
@@ -6187,25 +7157,258 @@ function drawLevelClearScreen() {
   drawLevelClearOverlay();
 }
 
-function drawWinScreen() {
-  drawScreenOverlay({
-    title: "YOU CLEARED THE REEF!",
-    subtitle: "The chum is yours and the current is clear",
-    statLines: [
-      `Final Score: ${score}`,
-      `High Score: ${highScore}`,
-      `Levels Completed: ${getLevelCount()} of ${getLevelCount()}`,
-    ],
-    action: "Press Space or Tap to Play Again",
-    titleColor: "#ffcf5c",
-    glowColor: "rgba(255, 207, 92, 0.9)",
-    accentColor: "rgba(255, 207, 92, 0.9)",
-    subtitleColor: "#d9fbff",
-    titleFont: "bold 36px Trebuchet MS, Lucida Console, monospace",
-    panelWidth: 548,
-    panelHeight: 350,
-    statsStart: 182,
+function drawCelebrationConfetti(progress = 1) {
+  const confettiColors = ["#ffcf5c", "#4fe3ff", "#ff7a9a", "#8effa8", "#b77dff"];
+
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, progress);
+  for (let index = 0; index < 34; index += 1) {
+    const x = 54 + ((index * 47) % 500);
+    const fall = easeIntroProgress(Math.min(1, progress)) * (28 + (index % 5) * 9);
+    const y = 28 + ((index * 29) % 155) + fall;
+    const size = 3 + (index % 3);
+
+    ctx.fillStyle = confettiColors[index % confettiColors.length];
+    ctx.globalAlpha = Math.min(0.58, progress);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate((index % 7) * 0.44 + progress * 0.35);
+    ctx.fillRect(-size / 2, -size / 2, size, size * 1.8);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawVictoryBubbles(x, y, width, height, progress = 1) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(217, 251, 255, 0.58)";
+  ctx.lineWidth = 1.2;
+
+  for (let index = 0; index < 18; index += 1) {
+    const drift = progress * (80 + index * 4);
+    const bubbleX = x + 48 + ((index * 53) % Math.max(1, width - 96)) + Math.sin(progress * Math.PI * 2 + index) * 5;
+    const bubbleY = y + height - 54 - ((drift + index * 31) % Math.max(1, height - 80));
+    const radius = 2 + (index % 4);
+
+    ctx.globalAlpha = Math.min(0.42, progress * 0.5);
+    ctx.beginPath();
+    ctx.arc(bubbleX, bubbleY, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawVictorySpotlight(x, y, width, height, progress = 1) {
+  const glow = ctx.createRadialGradient(x + width / 2, y + 150, 20, x + width / 2, y + 150, width * 0.5);
+  const alpha = Math.min(1, progress);
+
+  glow.addColorStop(0, `rgba(79, 227, 255, ${0.34 * alpha})`);
+  glow.addColorStop(0.45, `rgba(79, 227, 255, ${0.12 * alpha})`);
+  glow.addColorStop(1, "rgba(79, 227, 255, 0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(x + 8, y + 10, width - 16, height - 20);
+
+  ctx.save();
+  ctx.globalAlpha = 0.12 * alpha;
+  ctx.strokeStyle = "#4fe3ff";
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(x + width * 0.24, y + height - 90);
+  ctx.lineTo(x + width * 0.46, y + 116);
+  ctx.moveTo(x + width * 0.76, y + height - 90);
+  ctx.lineTo(x + width * 0.54, y + 116);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawVictoryStatBox(x, y, width, height, label, value, isPrimary = false) {
+  ctx.save();
+  ctx.fillStyle = isPrimary ? "rgba(12, 60, 78, 0.88)" : "rgba(3, 17, 31, 0.82)";
+  ctx.shadowColor = isPrimary ? "rgba(255, 207, 92, 0.55)" : "rgba(79, 227, 255, 0.36)";
+  ctx.shadowBlur = isPrimary ? 10 : 6;
+  drawRoundedRect(x, y, width, height, 8);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = isPrimary ? "rgba(255, 207, 92, 0.75)" : "rgba(79, 227, 255, 0.62)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  drawCenteredText(label, x + width / 2, y + (isPrimary ? 16 : 12), {
+    color: isPrimary ? "#ffcf5c" : "#4fe3ff",
+    font: isPrimary ? "bold 12px Trebuchet MS, Lucida Console, monospace" : "bold 9px Trebuchet MS, Lucida Console, monospace",
   });
+  drawCenteredText(value, x + width / 2, y + (isPrimary ? 42 : 32), {
+    color: isPrimary ? "#ffcf5c" : "#d9fbff",
+    font: isPrimary ? "bold 28px Trebuchet MS, Lucida Console, monospace" : "bold 18px Trebuchet MS, Lucida Console, monospace",
+    glowColor: isPrimary ? "rgba(255, 207, 92, 0.55)" : "rgba(79, 227, 255, 0.35)",
+    glowBlur: isPrimary ? 8 : 4,
+  });
+  ctx.restore();
+}
+
+function getAnimatedVictoryNumber(value, progress) {
+  return Math.round(value * easeIntroProgress(progress));
+}
+
+function drawNewHighScoreBadge(x, y, progress) {
+  if (progress <= 0) {
+    return;
+  }
+
+  const sparkle = Math.sin(getVictoryAnimationElapsedMs() / 110) * 0.5 + 0.5;
+
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, progress);
+  ctx.translate(x, y);
+  ctx.scale(0.82 + easeIntroOutBack(Math.min(1, progress)) * 0.18, 0.82 + easeIntroOutBack(Math.min(1, progress)) * 0.18);
+  ctx.fillStyle = "#ffcf5c";
+  ctx.strokeStyle = "#fff4a8";
+  ctx.lineWidth = 2;
+  ctx.shadowColor = "rgba(255, 207, 92, 0.72)";
+  ctx.shadowBlur = 8 + sparkle * 7;
+  drawRoundedRect(-52, -13, 104, 26, 8);
+  ctx.fill();
+  ctx.stroke();
+  drawCenteredText("NEW HIGH SCORE!", 0, 0, {
+    color: "#061421",
+    font: "bold 9px Trebuchet MS, Lucida Console, monospace",
+  });
+  ctx.restore();
+}
+
+function drawVictoryStatsPanel(x, y, width, height, progress = 1) {
+  const gap = 8;
+  const primaryWidth = (width - gap) / 2;
+  const smallWidth = (width - gap * 3) / 4;
+  const animatedScore = getAnimatedVictoryNumber(victoryAnimation.finalScore || score, progress);
+  const animatedHighScore = getAnimatedVictoryNumber(victoryAnimation.highScore || highScore, progress);
+  const animatedLevels = getAnimatedVictoryNumber(victoryAnimation.levelsCleared || getLevelCount(), progress);
+  const animatedChum = getAnimatedVictoryNumber(victoryAnimation.chumEaten || runStats.chumEaten, progress);
+  const animatedFrenzy = getAnimatedVictoryNumber(victoryAnimation.frenzyBaitsUsed || runStats.frenzyBaitsUsed, progress);
+  const animatedTimeMs = (victoryAnimation.timePlayedMs || getRunElapsedMs()) * easeIntroProgress(progress);
+  const levelsText = `${animatedLevels} / ${getLevelCount()}`;
+
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, progress / 0.16);
+  drawVictoryStatBox(x, y, primaryWidth, 60, "FINAL SCORE", String(animatedScore), true);
+  drawVictoryStatBox(x + primaryWidth + gap, y, primaryWidth, 60, "HIGH SCORE", String(animatedHighScore), true);
+  drawVictoryStatBox(x, y + 68, smallWidth, 50, "LEVELS", levelsText);
+  drawVictoryStatBox(x + (smallWidth + gap), y + 68, smallWidth, 50, "CHUM", String(animatedChum));
+  drawVictoryStatBox(x + (smallWidth + gap) * 2, y + 68, smallWidth, 50, "FRENZY", String(animatedFrenzy));
+  drawVictoryStatBox(x + (smallWidth + gap) * 3, y + 68, smallWidth, 50, "TIME", formatElapsedTime(animatedTimeMs));
+  ctx.restore();
+
+  if (victoryAnimation.isNewHighScore) {
+    drawNewHighScoreBadge(x + primaryWidth + gap + primaryWidth - 52, y - 5, progress);
+  }
+}
+
+function drawWinScreen() {
+  const panelX = 30;
+  const panelY = 28;
+  const panelWidth = canvas.width - 60;
+  const panelHeight = canvas.height - 54;
+  const elapsed = getVictoryAnimationElapsedMs();
+  const panelProgress = getVictoryProgress(0, VICTORY_PANEL_FADE_MS);
+  const headlineProgress = getVictoryProgress(VICTORY_HEADLINE_START_MS, VICTORY_HEADLINE_END_MS);
+  const chompProgress = getVictoryProgress(VICTORY_CHOMP_START_MS, VICTORY_CHOMP_END_MS);
+  const effectsProgress = getVictoryProgress(VICTORY_EFFECTS_START_MS, VICTORY_EFFECTS_END_MS);
+  const statsProgress = getVictoryProgress(VICTORY_STATS_START_MS, VICTORY_STATS_END_MS);
+  const messageProgress = getVictoryProgress(VICTORY_MESSAGE_START_MS, VICTORY_MESSAGE_END_MS);
+  const promptPulse = elapsed > VICTORY_PROMPT_PULSE_START_MS
+    ? (Math.sin((elapsed - VICTORY_PROMPT_PULSE_START_MS) / 360) + 1) / 2
+    : 0;
+  const panelAlpha = easeIntroProgress(panelProgress);
+  const headlineEase = easeIntroOutBack(headlineProgress);
+  const chompEase = easeIntroOutBack(chompProgress);
+  const chompY = panelY + 215 - chompEase * 65;
+  const chompScale = 1.78 + chompEase * 0.44;
+  const chompBounce = chompProgress >= 1 ? Math.sin(elapsed / 220) * 2.2 : 0;
+
+  if (elapsed >= VICTORY_PROMPT_PULSE_START_MS) {
+    victoryAnimation.completed = true;
+  }
+
+  drawOverlayBackdrop("rgba(255, 207, 92, 0.9)");
+  ctx.save();
+  ctx.globalAlpha = panelAlpha;
+  drawArcadePanel(panelX, panelY, panelWidth, panelHeight, "rgba(255, 207, 92, 0.9)");
+  drawVictorySpotlight(panelX, panelY, panelWidth, panelHeight, effectsProgress);
+  drawVictoryBubbles(panelX, panelY, panelWidth, panelHeight, effectsProgress);
+  drawCelebrationConfetti(effectsProgress);
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, headlineProgress * 1.25);
+  ctx.translate(canvas.width / 2, panelY + 44);
+  ctx.scale(0.86 + headlineEase * 0.14, 0.86 + headlineEase * 0.14);
+  drawCenteredText(`YOU CLEARED ALL ${getLevelCount()} LEVELS!`, 0, 0, {
+    color: "#ffcf5c",
+    font: "bold 31px Trebuchet MS, Lucida Console, monospace",
+    glowColor: "rgba(255, 207, 92, 0.95)",
+    glowBlur: 10 + headlineProgress * 10,
+  });
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = 0.7 * effectsProgress;
+  ctx.strokeStyle = "rgba(255, 207, 92, 0.7)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(canvas.width / 2, panelY + 156, 78, Math.PI * 0.15, Math.PI * 0.85);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, chompProgress * 1.25);
+  drawPresentationShark(canvas.width / 2, chompY + chompBounce, chompScale, -0.18, { mouthOpen: 0.38 });
+  ctx.restore();
+
+  drawVictoryStatsPanel(panelX + 38, panelY + 212, panelWidth - 76, 118, statsProgress);
+
+  ctx.save();
+  ctx.globalAlpha = easeIntroProgress(messageProgress);
+  ctx.fillStyle = "rgba(3, 17, 31, 0.76)";
+  drawRoundedRect(panelX + 66, panelY + 334, panelWidth - 132, 52, 8);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(79, 227, 255, 0.62)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  drawCenteredText("Legend of the Reef!", canvas.width / 2, panelY + 349, {
+    color: "#4fe3ff",
+    font: "bold 16px Trebuchet MS, Lucida Console, monospace",
+    glowColor: "rgba(79, 227, 255, 0.72)",
+    glowBlur: 9,
+  });
+  drawCenteredText("You've outchomped them all.", canvas.width / 2, panelY + 366, {
+    color: "#d9fbff",
+    font: "bold 14px Trebuchet MS, Lucida Console, monospace",
+  });
+  drawCenteredText("The ocean bows to you.", canvas.width / 2, panelY + 381, {
+    color: "#ffd4c7",
+    font: "bold 12px Trebuchet MS, Lucida Console, monospace",
+  });
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = panelAlpha;
+  ctx.fillStyle = "rgba(4, 31, 49, 0.92)";
+  ctx.shadowColor = promptPulse > 0 ? "rgba(255, 207, 92, 0.85)" : "rgba(255, 207, 92, 0.5)";
+  ctx.shadowBlur = 8 + promptPulse * 8;
+  drawRoundedRect(panelX + 48, panelY + panelHeight - 46, panelWidth - 96, 34, 8);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = `rgba(79, 227, 255, ${0.65 + promptPulse * 0.25})`;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  drawCenteredText(">>  PRESS SPACE OR TAP TO PLAY AGAIN  <<", canvas.width / 2, panelY + panelHeight - 29, {
+    color: "#ffcf5c",
+    font: "bold 16px Trebuchet MS, Lucida Console, monospace",
+    glowColor: "rgba(255, 207, 92, 0.75)",
+    glowBlur: 6 + promptPulse * 8,
+  });
+  ctx.restore();
 }
 
 function drawPauseOverlay() {
@@ -6320,6 +7523,7 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
+canvas.addEventListener("pointerdown", unlockStartScreenAudio);
 canvas.addEventListener("click", startGame);
 pauseButtonElement.addEventListener("click", togglePause);
 soundButtonElement.addEventListener("click", toggleMute);
@@ -6331,6 +7535,7 @@ const SWIPE_DISTANCE = 30;
 
 canvas.addEventListener("touchstart", (event) => {
   event.preventDefault();
+  unlockStartScreenAudio();
   const touch = event.changedTouches[0];
   touchStartX = touch.clientX;
   touchStartY = touch.clientY;

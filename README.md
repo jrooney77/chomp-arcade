@@ -1,12 +1,12 @@
 # CHOMP
 
-CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, and JavaScript. The player will eventually control a cartoon shark through coral reef tunnels, collecting chum and avoiding ocean defenders.
+CHOMP is a retro shark maze arcade game built with plain HTML, CSS, and JavaScript. The player controls a cartoon shark through coral reef tunnels, collecting chum and avoiding ocean defenders.
 
 ## Current Build
 
 - Clean browser page with a centered HTML Canvas.
-- Start screen with title, subtitle, objective text, and start prompt.
-- Spacebar, click, or tap input to switch into the playing screen.
+- Animated start screen with a neon underwater attract sequence, decorative CHOMP hero art, objective text, controls, and start prompt.
+- Spacebar, click, or tap input to start gameplay.
 - Tile-based maze rendered on the canvas.
 - Cartoon player shark with smooth maze movement.
 - Arrow Key, WASD, and mobile swipe controls.
@@ -17,7 +17,7 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - Lives, Game Over screen, and restart flow.
 - Frenzy Mode from Frenzy Bait, with vulnerable enemies and bonus points.
 - Larger responsive arcade display for desktop, tablets, and phones.
-- Data-driven level progression with Level Clear and You Win screens.
+- Data-driven level progression with Level Clear and animated final victory celebration screens.
 - Debug mode for faster local testing.
 - No external libraries.
 
@@ -42,6 +42,8 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 
 - CHOMP uses the Web Audio API for both generated arcade sound effects and WAV playback.
 - Music starts only after user interaction, such as pressing Space, clicking, tapping, or using a control button.
+- The main music loop plays on the start screen after audio is unlocked, then continues cleanly into gameplay.
+- The final victory screen uses the victory music once Level 50 is completed.
 - Audio assets live in the `audio/` folder:
   - `audio/chomp-main-loop.wav`: normal gameplay loop.
   - `audio/chomp-frenzy-loop.wav`: Frenzy Mode loop with playback rate slowing near the timer end.
@@ -79,6 +81,7 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - The maze, shark position, and enemy positions reset for each new level.
 - Level 3 uses its level data to increase enemy speed while keeping movement aligned to the tile grid.
 - Clearing Level 50 shows the You Win screen with all 50 levels completed.
+- The final victory screen celebrates completion with animated CHOMP art, bubbles, confetti, stat counters, and a replay prompt.
 
 ### Level Progression
 
@@ -195,8 +198,8 @@ Then visit `http://localhost:8000/`. The WAV music and one-shot sounds are loade
 To test the game:
 
 1. Open `http://localhost:8000/`.
-2. Confirm the CHOMP start screen is visible.
-3. Press Space, click the canvas, or tap the canvas.
+2. Confirm the animated CHOMP start screen and left-side attract sequence are visible.
+3. Press Space, click the canvas, or tap the canvas to start.
 4. Confirm the maze appears with the shark in the bottom center path.
 5. Move with Arrow Keys or WASD.
 6. On mobile, tap to start and swipe on the canvas to turn the shark.
@@ -208,4 +211,5 @@ To test the game:
 12. Touch enemies outside Frenzy Mode and confirm lives decrease.
 13. Lose all lives, then press Space or tap to restart.
 14. Try the game in a narrow browser window or on a phone and confirm the canvas stays centered and playable.
-15. Press Backquote (`), then `L` to quickly test Level Clear, level progression, and the You Win screen.
+15. Press Backquote (`), then `L` to quickly test Level Clear, level progression, and the final victory screen.
+16. On the final victory screen, press Space, click, or tap to replay from Level 1.
