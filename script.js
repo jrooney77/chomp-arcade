@@ -2002,6 +2002,44 @@ function noteAudioError(message, error = null) {
   lastAudioError = error && error.message ? `${message}: ${error.message}` : message;
 }
 
+function getAudioBytesPreview(arrayBuffer, byteCount = 40) {
+  if (!arrayBuffer) {
+    return "";
+  }
+
+  const bytes = new Uint8Array(arrayBuffer.slice(0, byteCount));
+
+  return Array.from(bytes)
+    .map((byte) => (byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "."))
+    .join("");
+}
+
+function hasWavSignature(arrayBuffer) {
+  if (!arrayBuffer || arrayBuffer.byteLength < 12) {
+    return false;
+  }
+
+  const bytes = new Uint8Array(arrayBuffer.slice(0, 12));
+  const riff = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+  const wave = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
+
+  return riff === "RIFF" && wave === "WAVE";
+}
+
+function getAudioResponseDetails(path, request) {
+  const arrayBuffer = request.response;
+
+  return {
+    path,
+    status: request.status,
+    contentType: request.getResponseHeader("Content-Type") || "unavailable",
+    contentLength: request.getResponseHeader("Content-Length") || "unavailable",
+    byteLength: arrayBuffer ? arrayBuffer.byteLength : 0,
+    first40BytesText: getAudioBytesPreview(arrayBuffer),
+    hasRiffWaveSignature: hasWavSignature(arrayBuffer),
+  };
+}
+
 function resumeAudioContext() {
   if (!audioContext) {
     return Promise.resolve(false);
@@ -2146,6 +2184,7 @@ function loadAudioArrayBuffer(path, onStatus = null) {
       const status = request.status;
       const ok = (status >= 200 && status < 300) || (status === 0 && request.response);
       const bytes = request.response ? request.response.byteLength : 0;
+      const responseDetails = getAudioResponseDetails(path, request);
 
       if (onStatus) {
         onStatus({ path, status, ok, bytes });
@@ -2153,12 +2192,18 @@ function loadAudioArrayBuffer(path, onStatus = null) {
 
       if (!ok) {
         noteAudioError(`${path} returned HTTP ${status}`);
-        console.warn("[CHOMP audio] WAV fetch failure", { path, status });
+        console.warn("[CHOMP audio] WAV fetch failure", responseDetails);
         reject(new Error(`${path} returned HTTP ${status}`));
         return;
       }
 
-      console.info("[CHOMP audio] WAV fetch success", { path, status, bytes });
+      console.info("[CHOMP audio] WAV fetch success", responseDetails);
+
+      if (!responseDetails.hasRiffWaveSignature) {
+        noteAudioError(`${path} response is not RIFF/WAVE audio`);
+        console.warn("[CHOMP audio] WAV signature check failed", responseDetails);
+      }
+
       resolve(request.response);
     };
 
@@ -5330,8 +5375,7 @@ function getAudioStatusLines() {
   const audioState = audioContext ? audioContext.state : "none";
   const mainBufferLoaded = Boolean(loadedAudioBuffers.main);
   const deathBufferLoaded = Boolean(loadedAudioBuffers.death);
-  const mainSourceStarted = Boolean(mainMusicSource) ||
-    Boolean(mediaAudioTracks.main && !mediaAudioTracks.main.element.paused);
+  const mainSourceStarted = Boolean(loadedAudioBuffers.main && mainMusicSource);
   const errorText = lastAudioError || "none";
 
   return [
