@@ -97,12 +97,13 @@ const DEFAULT_GOLDEN_FISH_SETTINGS = {
 };
 const HIGH_SCORE_STORAGE_KEY = "chompHighScore";
 const SOUND_MUTED_STORAGE_KEY = "chompSoundMuted";
-const MASTER_VOLUME = 0.18;
+const MASTER_VOLUME = 0.65;
 const GENERATED_SFX_GAIN = 1;
-const MAIN_MUSIC_GAIN = 0.2;
-const FRENZY_MUSIC_GAIN = 0.25;
-const DEATH_SOUND_GAIN = 0.55;
-const VICTORY_MUSIC_GAIN = 0.35;
+const MAIN_MUSIC_GAIN = 0.45;
+const FRENZY_MUSIC_GAIN = 0.5;
+const DEATH_SOUND_GAIN = 0.85;
+const VICTORY_MUSIC_GAIN = 0.6;
+const AUDIO_DEBUG_ENABLED = true;
 const MUSIC_FADE_SECONDS = 0.45;
 const QUICK_MUSIC_FADE_SECONDS = 0.18;
 const MUSIC_DUCK_GAIN_RATIO = 0.28;
@@ -1959,6 +1960,18 @@ function updateSoundButton() {
   soundButtonElement.setAttribute("aria-pressed", String(!isSoundMuted));
 }
 
+function logAudioDebug(message, details = null) {
+  if (!AUDIO_DEBUG_ENABLED) {
+    return;
+  }
+
+  if (details) {
+    console.info(`[CHOMP audio] ${message}`, details);
+  } else {
+    console.info(`[CHOMP audio] ${message}`);
+  }
+}
+
 function resumeAudioContext() {
   if (!audioContext || audioContext.state !== "suspended") {
     return Promise.resolve();
@@ -2072,10 +2085,13 @@ function loadAudioBuffers() {
     return audioLoadPromise;
   }
 
-  audioLoadPromise = Promise.all(Object.entries(AUDIO_ASSETS).map(([key, asset]) => (
-    fetch(asset.path)
+  audioLoadPromise = Promise.all(Object.entries(AUDIO_ASSETS).map(([key, asset]) => {
+    logAudioDebug(`Fetching ${key} WAV`, { path: asset.path });
+
+    return fetch(asset.path)
       .then((response) => {
         if (!response.ok) {
+          console.warn(`[CHOMP audio] ${asset.path} returned HTTP ${response.status}.`, { key, path: asset.path });
           throw new Error(`HTTP ${response.status}`);
         }
 
@@ -2084,6 +2100,11 @@ function loadAudioBuffers() {
       .then((arrayBuffer) => decodeAudioArrayBuffer(arrayBuffer))
       .then((audioBuffer) => {
         loadedAudioBuffers[key] = audioBuffer;
+        logAudioDebug(`Decoded ${key} WAV`, {
+          path: asset.path,
+          duration: `${audioBuffer.duration.toFixed(2)}s`,
+        });
+
         if (key === "death" && pendingDeathSoundPlayback) {
           playDeathSound();
         }
@@ -2096,11 +2117,14 @@ function loadAudioBuffers() {
         return audioBuffer;
       })
       .catch((error) => {
-        console.warn(`CHOMP audio failed to load ${asset.path}. The game will continue without it.`, error);
+        console.warn(
+          `[CHOMP audio] Failed to fetch or decode ${asset.path}. The game will continue without it.`,
+          error
+        );
         loadedAudioBuffers[key] = null;
         return null;
-      })
-  ))).then(() => {
+      });
+  })).then(() => {
     syncAudioForGameState();
     return loadedAudioBuffers;
   });
@@ -2214,6 +2238,12 @@ function ensureLoopingSource(trackKey) {
   }
 
   try {
+    logAudioDebug(`${trackKey === "main" ? "Main music" : "Frenzy music"} starts`, {
+      path: asset.path,
+      contextState: audioContext.state,
+      loopStart: source.loopStart,
+      loopEnd: source.loopEnd,
+    });
     source.start();
   } catch (error) {
     console.warn(`CHOMP audio could not start ${asset.path}.`, error);
@@ -2247,6 +2277,7 @@ function stopLoopingSource(trackKey, duration = MUSIC_FADE_SECONDS) {
 }
 
 function startMainMusic(volumeRatio = 1, duration = MUSIC_FADE_SECONDS) {
+  logAudioDebug("Main music playback requested", { contextState: audioContext ? audioContext.state : "unavailable" });
   ensureTrackGain("main");
   ensureLoopingSource("main");
   fadeGain(mainMusicGain, getMusicVolume("main", volumeRatio), duration);
@@ -2257,6 +2288,7 @@ function fadeMainMusic(volumeRatio = 0, duration = MUSIC_FADE_SECONDS) {
 }
 
 function startFrenzyMusic(duration = QUICK_MUSIC_FADE_SECONDS) {
+  logAudioDebug("Frenzy music playback requested", { contextState: audioContext ? audioContext.state : "unavailable" });
   ensureTrackGain("frenzy");
   ensureLoopingSource("frenzy");
   updateFrenzyMusicPlaybackRate(true);
@@ -2329,6 +2361,7 @@ function playDeathSound() {
     return;
   }
 
+  logAudioDebug("Death sound playback requested", { contextState: audioContext.state });
   pendingDeathSoundPlayback = true;
   resumeAudioContext();
 
@@ -2365,6 +2398,10 @@ function playDeathSound() {
   deathSoundSource = source;
 
   try {
+    logAudioDebug("Death sound starts", {
+      path: AUDIO_ASSETS.death.path,
+      contextState: audioContext.state,
+    });
     source.start();
   } catch (error) {
     console.warn(`CHOMP audio could not start ${AUDIO_ASSETS.death.path}.`, error);
