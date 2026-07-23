@@ -107,6 +107,7 @@ const MUSIC_FADE_SECONDS = 0.45;
 const QUICK_MUSIC_FADE_SECONDS = 0.18;
 const MUSIC_DUCK_GAIN_RATIO = 0.28;
 const LEVEL_CLEAR_MUSIC_GAIN_RATIO = 0.35;
+const DEATH_ANIMATION_FALLBACK_MS = 7000;
 const MEDIA_FRENZY_MIN_PLAYBACK_RATE = 1;
 const MEDIA_FRENZY_RATE_UPDATE_SECONDS = 0.45;
 const MEDIA_FRENZY_RATE_EPSILON = 0.015;
@@ -1832,6 +1833,18 @@ let frenzyMode = {
   messageType: "start",
   pulseUntil: 0,
 };
+let deathAnimation = {
+  active: false,
+  startTime: 0,
+  durationMs: DEATH_ANIMATION_FALLBACK_MS,
+  elapsedBeforePauseMs: 0,
+  pauseStartedAt: 0,
+  x: 0,
+  y: 0,
+  startingDirection: "right",
+  wasFrenzy: false,
+  finalized: false,
+};
 let goldenFish = {
   active: false,
   row: null,
@@ -2723,6 +2736,11 @@ function syncAudioForGameState() {
 
   loadAudioBuffers();
 
+  if (deathAnimation.active) {
+    duckGameplayMusic();
+    return;
+  }
+
   if (isPaused) {
     fadeMainMusic(0, QUICK_MUSIC_FADE_SECONDS);
     fadeGain(frenzyMusicGain, 0, QUICK_MUSIC_FADE_SECONDS);
@@ -2948,14 +2966,30 @@ function togglePause() {
     pauseStartedRealTime = 0;
     pauseStartedGameTime = 0;
     isPaused = false;
+
+    if (deathAnimation.active) {
+      deathAnimation.startTime = getGameTime() - deathAnimation.elapsedBeforePauseMs;
+      deathAnimation.pauseStartedAt = 0;
+      resumeDeathAnimationAudio();
+    }
+
     playSound("resume");
   } else {
     const now = performance.now();
+
+    if (deathAnimation.active) {
+      deathAnimation.elapsedBeforePauseMs = getDeathAnimationElapsedMs();
+      deathAnimation.pauseStartedAt = now;
+    }
 
     pauseStartedRealTime = now;
     pauseStartedGameTime = now - totalPausedTime;
     isPaused = true;
     playSound("pause");
+
+    if (deathAnimation.active) {
+      pauseDeathAnimationAudio();
+    }
   }
 
   updateFrenzyDisplay();
@@ -3023,6 +3057,8 @@ function debugClearCurrentLevel() {
     return;
   }
 
+  resetDeathAnimation();
+  stopDeathSound(true);
   remainingChum = 0;
   updateStatusDisplay();
   startLevelClear();
@@ -3272,6 +3308,8 @@ function isFrenzyEndingSoon() {
 }
 
 function loadLevel(levelNumber) {
+  resetDeathAnimation();
+  stopDeathSound(true);
   currentLevel = clampLevelNumber(levelNumber);
   currentLayout = getLevelConfig(currentLevel);
   maze = cloneMaze(currentLayout.maze);
@@ -3291,6 +3329,7 @@ function loadLevel(levelNumber) {
 }
 
 function resetGame() {
+  resetDeathAnimation();
   stopVictoryMusic(0);
   stopDeathSound(true);
   currentLevel = 1;
@@ -3313,7 +3352,7 @@ function resetGame() {
 }
 
 function setPlayerNextDirection(direction) {
-  if (gameState !== GAME_STATE.PLAYING || isPaused || !DIRECTIONS[direction]) {
+  if (gameState !== GAME_STATE.PLAYING || isPaused || deathAnimation.active || !DIRECTIONS[direction]) {
     return;
   }
 
@@ -3934,6 +3973,106 @@ function isPufferGuardPaused(enemy) {
   return enemy.type === "puffer" && enemy.pufferState !== "normal";
 }
 
+function getDeathAnimationDurationMs() {
+  const deathBuffer = loadedAudioBuffers.death;
+  const deathMediaElement = mediaAudioTracks.death ? mediaAudioTracks.death.element : null;
+
+  if (deathBuffer && Number.isFinite(deathBuffer.duration) && deathBuffer.duration > 0) {
+    return deathBuffer.duration * 1000;
+  }
+
+  if (deathMediaElement &&
+    Number.isFinite(deathMediaElement.duration) &&
+    deathMediaElement.duration > 0) {
+    return deathMediaElement.duration * 1000;
+  }
+
+  return DEATH_ANIMATION_FALLBACK_MS;
+}
+
+function resetDeathAnimation() {
+  deathAnimation.active = false;
+  deathAnimation.startTime = 0;
+  deathAnimation.durationMs = DEATH_ANIMATION_FALLBACK_MS;
+  deathAnimation.elapsedBeforePauseMs = 0;
+  deathAnimation.pauseStartedAt = 0;
+  deathAnimation.x = 0;
+  deathAnimation.y = 0;
+  deathAnimation.startingDirection = "right";
+  deathAnimation.wasFrenzy = false;
+  deathAnimation.finalized = false;
+}
+
+function getDeathAnimationElapsedMs() {
+  if (!deathAnimation.active) {
+    return 0;
+  }
+
+  if (isPaused) {
+    return deathAnimation.elapsedBeforePauseMs;
+  }
+
+  return Math.max(0, getGameTime() - deathAnimation.startTime);
+}
+
+function getDeathAnimationProgress() {
+  if (!deathAnimation.active || deathAnimation.durationMs <= 0) {
+    return 0;
+  }
+
+  return Math.min(1, getDeathAnimationElapsedMs() / deathAnimation.durationMs);
+}
+
+function spawnSharkDeathBurst(x, y) {
+  addParticle({
+    type: "ring",
+    x,
+    y,
+    size: 9,
+    duration: deathAnimation.durationMs * 0.22,
+    color: "rgba(255, 255, 255, 0.88)",
+  });
+
+  addParticle({
+    type: "ring",
+    x,
+    y,
+    size: 16,
+    duration: deathAnimation.durationMs * 0.34,
+    color: "rgba(79, 227, 255, 0.56)",
+  });
+
+  for (let i = 0; i < 9; i += 1) {
+    const angle = (Math.PI * 2 * i) / 9 + Math.random() * 0.28;
+    const speed = 34 + Math.random() * 28;
+
+    addParticle({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 24,
+      size: 3.8 + Math.random() * 3.4,
+      duration: deathAnimation.durationMs * (0.42 + Math.random() * 0.18),
+      color: "rgba(217, 251, 255, 0.82)",
+    });
+  }
+
+  for (let i = 0; i < 14; i += 1) {
+    const angle = (Math.PI * 2 * i) / 14 + Math.random() * 0.38;
+    const speed = 18 + Math.random() * 26;
+
+    addParticle({
+      x: x + Math.random() * 12 - 6,
+      y: y + Math.random() * 12 - 6,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 34,
+      size: 1.6 + Math.random() * 2.1,
+      duration: deathAnimation.durationMs * (0.32 + Math.random() * 0.22),
+      color: "rgba(183, 236, 255, 0.74)",
+    });
+  }
+}
+
 function updateEnemies() {
   if (debugMode) {
     return;
@@ -4037,11 +4176,39 @@ function getEnemyHitDistance(enemy) {
 }
 
 function loseLife() {
+  if (deathAnimation.active) {
+    return;
+  }
+
+  const wasFrenzy = frenzyMode.active;
+
+  deathAnimation.active = true;
+  deathAnimation.startTime = getGameTime();
+  deathAnimation.durationMs = getDeathAnimationDurationMs();
+  deathAnimation.elapsedBeforePauseMs = 0;
+  deathAnimation.pauseStartedAt = 0;
+  deathAnimation.x = player.x;
+  deathAnimation.y = player.y;
+  deathAnimation.startingDirection = player.direction || player.nextDirection || "right";
+  deathAnimation.wasFrenzy = wasFrenzy;
+  deathAnimation.finalized = false;
   endFrenzyMode();
   clearGoldenFish();
-  lives -= 1;
+  player.direction = null;
+  player.nextDirection = null;
+  player.chompBoostUntil = 0;
+  spawnSharkDeathBurst(deathAnimation.x, deathAnimation.y);
   playDeathSound();
   playSound("loseLife");
+}
+
+function finishDeathAnimation() {
+  if (!deathAnimation.active || deathAnimation.finalized) {
+    return;
+  }
+
+  deathAnimation.finalized = true;
+  lives -= 1;
   updateScoreDisplay();
 
   resetPlayerPosition();
@@ -4054,12 +4221,57 @@ function loseLife() {
     gameState = GAME_STATE.GAME_OVER;
     updatePauseButton();
     playSound("gameOver");
+    resetDeathAnimation();
     return;
+  }
+
+  resetDeathAnimation();
+  updateStatusDisplay();
+  syncAudioForGameState();
+}
+
+function updateDeathAnimation() {
+  if (!deathAnimation.active) {
+    return;
+  }
+
+  if (getDeathAnimationProgress() >= 1) {
+    finishDeathAnimation();
+  }
+}
+
+function pauseDeathAnimationAudio() {
+  if (mediaAudioTracks.death) {
+    mediaAudioTracks.death.element.pause();
+  }
+
+  if (audioContext && audioContext.state === "running") {
+    audioContext.suspend().catch((error) => {
+      console.warn("CHOMP audio could not suspend during death pause.", error);
+    });
+  }
+}
+
+function resumeDeathAnimationAudio() {
+  if (audioContext && audioContext.state === "suspended") {
+    resumeAudioContext().catch((error) => {
+      console.warn("CHOMP audio could not resume after death pause.", error);
+    });
+  }
+
+  if (mediaAudioTracks.death) {
+    const playPromise = mediaAudioTracks.death.element.play();
+
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch((error) => {
+        console.warn(`CHOMP audio could not resume ${AUDIO_ASSETS.death.path}.`, error);
+      });
+    }
   }
 }
 
 function checkPlayerEnemyCollision() {
-  if (debugMode) {
+  if (debugMode || deathAnimation.active) {
     return;
   }
 
@@ -4869,6 +5081,35 @@ function drawSharkEye() {
   ctx.stroke();
 }
 
+function drawShockedSharkEye(progress) {
+  const eyeX = 5.3;
+  const eyeY = -7.2;
+  const shockAmount = Math.max(0, 1 - progress / 0.28);
+
+  ctx.fillStyle = "#f8fdff";
+  ctx.beginPath();
+  ctx.arc(eyeX, eyeY, 3.4 + shockAmount * 1.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#07131f";
+  ctx.beginPath();
+  ctx.arc(eyeX + 0.9, eyeY + 0.15, 1.35 + shockAmount * 0.35, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#d9fbff";
+  ctx.beginPath();
+  ctx.arc(eyeX - 0.2, eyeY - 1.2, 0.75, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#07131f";
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(eyeX - 4.3, eyeY - 5.4 - shockAmount * 1.8);
+  ctx.lineTo(eyeX + 4.1, eyeY - 6.3 + shockAmount * 0.6);
+  ctx.stroke();
+}
+
 function drawFrenzySharkAura(pulse) {
   const auraSize = 22 + pulse * 2.2;
 
@@ -4890,7 +5131,82 @@ function drawFrenzySharkAura(pulse) {
   ctx.restore();
 }
 
+function drawDeathImpactFlash(progress) {
+  if (progress > 0.15) {
+    return;
+  }
+
+  const flashProgress = progress / 0.15;
+
+  ctx.save();
+  ctx.globalAlpha = (1 - flashProgress) * 0.86;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(0, 0, 22 + flashProgress * 24, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlayerDeathShark() {
+  const progress = getDeathAnimationProgress();
+  const direction = DIRECTIONS[deathAnimation.startingDirection] || DIRECTIONS.right;
+  const spinStart = Math.max(0, (progress - 0.15) / 0.55);
+  const spinProgress = Math.min(1, spinStart);
+  const wobble = Math.sin(progress * Math.PI * 10) * (1 - progress) * 0.22;
+  const playfulSpin = spinProgress * Math.PI * 2.35;
+  const shrinkProgress = progress < 0.15 ? 0 : (progress - 0.15) / 0.85;
+  const scale = Math.max(0.18, 1.05 - shrinkProgress * 0.78);
+  const fadeProgress = Math.max(0, (progress - 0.7) / 0.3);
+  const alpha = Math.max(0, 1 - fadeProgress);
+  const shockAmount = Math.max(0, 1 - progress / 0.15);
+  const chompAmount = progress < 0.15
+    ? 1
+    : Math.max(0.25, 0.72 - progress * 0.34 + Math.sin(progress * Math.PI * 8) * 0.12);
+  const pulse = Math.sin(getGameTime() / 100);
+  const isFrenzy = deathAnimation.wasFrenzy;
+
+  ctx.save();
+  ctx.translate(deathAnimation.x, deathAnimation.y);
+  ctx.rotate(direction.angle + playfulSpin + wobble);
+  ctx.scale(scale + shockAmount * 0.08, scale + shockAmount * 0.08);
+  ctx.globalAlpha = alpha;
+
+  drawDeathImpactFlash(progress);
+
+  const bodyGradient = ctx.createLinearGradient(-18, -12, 18, 12);
+  bodyGradient.addColorStop(0, isFrenzy ? "#ffb15f" : "#bcdbe6");
+  bodyGradient.addColorStop(0.42, isFrenzy ? "#ff7a3d" : "#7fb0c4");
+  bodyGradient.addColorStop(1, isFrenzy ? "#c93c34" : "#3f6a80");
+
+  ctx.shadowColor = "rgba(255, 255, 255, 0.78)";
+  ctx.shadowBlur = 10 + shockAmount * 16;
+
+  if (isFrenzy) {
+    drawFrenzySharkAura(pulse);
+  }
+
+  ctx.fillStyle = bodyGradient;
+  ctx.strokeStyle = "#f8fdff";
+  ctx.lineWidth = 2;
+
+  drawAnimatedSharkTail();
+  drawSharkBody(chompAmount, isFrenzy);
+  drawSharkDorsalFin(isFrenzy);
+  drawSharkBelly();
+  drawSharkLowerFin(isFrenzy);
+  drawShockedSharkEye(progress);
+  drawSharkMouth(chompAmount);
+
+  ctx.restore();
+}
+
 function drawPlayerShark() {
+  if (deathAnimation.active) {
+    drawPlayerDeathShark();
+    return;
+  }
+
   const facing = player.direction || player.nextDirection || "right";
   const direction = DIRECTIONS[facing];
   const isFrenzy = frenzyMode.active && gameState === GAME_STATE.PLAYING;
@@ -5882,7 +6198,9 @@ function gameLoop() {
     drawStartScreen();
   }
 
-  if (gameState === GAME_STATE.PLAYING && !isPaused) {
+  if (gameState === GAME_STATE.PLAYING && !isPaused && deathAnimation.active) {
+    updateDeathAnimation();
+  } else if (gameState === GAME_STATE.PLAYING && !isPaused) {
     updateFrenzyMode();
     updateGoldenFish();
     movePlayer();
@@ -5894,8 +6212,15 @@ function gameLoop() {
 
   if (gameState === GAME_STATE.PLAYING) {
     drawMaze();
-    drawPlayerShark();
-    drawEnemies();
+
+    if (deathAnimation.active) {
+      drawEnemies();
+      drawPlayerShark();
+    } else {
+      drawPlayerShark();
+      drawEnemies();
+    }
+
     drawParticles();
     drawFrenzyEffects();
 
