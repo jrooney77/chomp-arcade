@@ -57,14 +57,14 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 
 ## Levels
 
-- The game currently has 20 configured levels.
+- The game currently has 50 configured levels.
 - The level data is organized so future updates can add more levels without new gameplay functions.
-- The roadmap may eventually grow the game toward 50 levels, but Levels 21-50 have not been created yet.
+- Level 50 is the final configured level and completes the full CHOMP level roadmap.
 - Collecting all chum clears the current level. Frenzy Bait is optional for clearing.
 - Score and lives carry forward between levels.
 - The maze, shark position, and enemy positions reset for each new level.
 - Level 3 uses its level data to increase enemy speed while keeping movement aligned to the tile grid.
-- Clearing the last configured level shows the You Win screen.
+- Clearing Level 50 shows the You Win screen with all 50 levels completed.
 
 ### Level Progression
 
@@ -88,17 +88,47 @@ CHOMP is a retro shark maze arcade game foundation built with plain HTML, CSS, a
 - Level 18, Voltage Chambers: emphasizes Electric Eel pressure in connected chambers with a speed increase.
 - Level 19, Deep Reef Pursuit: hardest non-milestone pursuit layout in the second batch.
 - Level 20, Abyss Gauntlet: milestone challenge with all current enemy types and the final victory screen.
+- Level 21, Tidal Reset: steps down after Level 20 with three enemies and looping escape routes.
+- Level 22, Puffer Rings: uses one Puffer Guard in ring-like routes without sealing progress.
+- Level 23, Drone Crossfire: emphasizes Diver Drone pressure across intersecting corridors.
+- Level 24, Electric Spiral: layers Electric Eel pressure around spiral-like routes and bypasses.
+- Level 25, Golden Current: makes Golden Fish timing more tempting and risky.
+- Level 26, Guarded Chambers: uses Puffers in open chambers with a moderate speed increase.
+- Level 27, Predator Switchbacks: combines Dolphin and Drone pursuit through switchback loops.
+- Level 28, Voltage Lock: pushes Eel-heavy pressure through risky central and safer outer routes.
+- Level 29, Deepwater Hunt: hardest non-milestone hunt in the third batch.
+- Level 30, Trench Gauntlet: milestone challenge with all current enemy types and the final victory screen.
+- Level 31, Pressure Release: resets pressure after Level 30 with three enemies and looping routes.
+- Level 32, Puffer Concourse: adds one Puffer Guard to broad intersections and circular options.
+- Level 33, Drone Pursuit: emphasizes Diver Drone chase pressure with frequent side exits.
+- Level 34, Electric Fork: pushes Electric Eel routing through branching center and outer paths.
+- Level 35, Frenzy Vault: mid-batch challenge where risky Frenzy Bait helps manage all enemy types.
+- Level 36, Guarded Basin: uses two Puffers in open chambers with several bypass routes.
+- Level 37, Predator Lanes: combines Dolphin and Drone pressure across alternating corridor lengths.
+- Level 38, Voltage Web: creates Eel-heavy pressure through interconnected route choices.
+- Level 39, Blackwater Chase: hardest non-milestone chase layout in the fourth batch.
+- Level 40, Reefbreaker Gauntlet: milestone challenge with all current enemy types and the final victory screen.
+- Level 41, Final Descent: resets pressure after Level 40 with three enemies and looping paths.
+- Level 42, Puffer Crown: uses one Puffer Guard in large intersections and circular routes.
+- Level 43, Drone Barrage: emphasizes Diver Drone pressure with escape routes breaking long sight lines.
+- Level 44, Electric Maw: pushes Electric Eel pressure through risky center and safer outer routes.
+- Level 45, Frenzy Crucible: major Frenzy Bait challenge with all current enemy types and strong escape loops.
+- Level 46, Guarded Abyss: uses two Puffers in open chambers with several exits.
+- Level 47, Predator Spiral: layers Dolphin and Drone pursuit through spiral-like routing.
+- Level 48, Voltage Collapse: creates Eel-heavy late-game pressure with fallback routes.
+- Level 49, Last Hunt: hardest non-final level with high chase pressure and tactical loops.
+- Level 50, CHOMP Eternal: final challenge with all current enemy types, extra Frenzy support, and the final victory screen.
 
-### Adding Future Levels
+### Level Data
 
-Levels live in the `LEVELS` array in `script.js`. To add Level 21 later, copy an existing level object, paste it after Level 20, and update its data:
+Levels live in the `LEVELS` array in `script.js`. Each configured level uses the same data shape:
 
 ```js
 {
-  id: 21,
-  name: "New Reef",
-  theme: "newTheme",
-  enemySpeedModifier: 1,
+  id: 50,
+  name: "CHOMP Eternal",
+  theme: "chompEternal",
+  enemySpeedModifier: 0,
   goldenFish: {
     firstChumTrigger: 12,
     chumInterval: 28,
